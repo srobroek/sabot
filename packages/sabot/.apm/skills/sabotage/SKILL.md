@@ -37,7 +37,7 @@ non-interactive run then takes the defaults below and records each as a gap.
    `file(s)` · `one script/hook` · `one agent or skill` · `uncommitted changes` ·
    `commit` · `commit range / branch compare` · `PR`. Kinds compose. Assuming whole
    repo is a scope error. Capture the user's stated fear too; it is stamped on the
-   epic as `threat` and orders the report, without being handed to a scout as a
+   epic as `threat` and orders the report, without being handed to a sabot-scout as a
    hypothesis.
    - **Ignore agentic-tooling config SILENTLY**, per `references/targeting.md`.
      Exclude the whole class, not a fixed list: any file that configures a coding
@@ -53,7 +53,7 @@ non-interactive run then takes the defaults below and records each as a gap.
      when the user asks for it by name (the agents surface pointed at it).
    - This silent ignore is about the user's TOOLING config, not about agentic code. A
      production agent in `src/` (a `langgraph`/`langchain`/AgentCore app, a
-     prompt-assembly path) IS in scope on a whole-repo run; the scout detects it by
+     prompt-assembly path) IS in scope on a whole-repo run; the sabot-scout detects it by
      signature (see `references/surfaces/agents.md`). Ignore the config dirs; keep
      the app's agentic code.
 2. **Which surfaces?** Detect them from the target via `references/surfaces/index.md`,
@@ -103,7 +103,7 @@ reference every shipped asset by an absolute path beneath it. A skill-relative
 path silently matches nothing, and a run that matched nothing looks clean.
 
 **When these agent types are unavailable, DIAGNOSE THE INSTALL FIRST.** The package
-ships `scout`, `fuzzer`, `gremlin`, `triager`, `challenger`, and `hardener` under
+ships `sabot-scout`, `fuzzer`, `gremlin`, `triager`, `challenger`, and `hardener` under
 `.apm/agents/`, materialised to `agents/*.md` for Claude and deployed by
 `apm install` or `claude plugin install`. Absent types are almost always a broken or
 missing install rather than a runtime that cannot load them, so before falling back:
@@ -132,7 +132,7 @@ neither judges its own output.
 
 | Agent | Writes | Executes | Judges |
 |-------|--------|----------|--------|
-| `scout` | recon artifacts, repo-specific rules | read-only queries | nothing |
+| `sabot-scout` | recon artifacts, repo-specific rules | read-only queries | nothing |
 | `fuzzer` | harnesses, corpora, attack scenarios | nothing | nothing |
 | `gremlin` | nothing | scanners and harnesses, per surface | nothing |
 | `triager` | crash records | minimizer only | crash class |
@@ -170,7 +170,7 @@ step rendered as a sub-bullet was silently skipped on one live run.
    accepted-risk docs all govern: a rule the project disabled with a stated reason
    caps at HARDENING. Image provisioning and this pre-pass both run in spawned
    agents so their tool output never enters the orchestrator's context.
-5. **Recon.** Spawn one `scout` per surface, in parallel, to derive this repo's own
+5. **Recon.** Spawn one `sabot-scout` per surface, in parallel, to derive this repo's own
    threat model: what it claims about itself, where its trust boundaries sit, how it
    does things and which places deviate, plus validated semgrep or ast-grep rules
    for THIS codebase. Standard rulesets are used as they come, and what recon builds
@@ -289,7 +289,7 @@ NOT Raw scanner output is HARDENING until a path or repro is traced, so do not r
 | `references/targeting.md` | Step 2: any non-whole-repo target |
 | `references/surfaces/index.md` | Step 2: route target to surface docs |
 | `references/recon.md` | Step 5: derive the trust map, invariants, and repo-specific rules |
-| `references/scout-brief.md` | Step 5: build each `scout` Brief |
+| `references/scout-brief.md` | Step 5: build each `sabot-scout` Brief |
 | `references/surfaces/<surface>.md` | Steps 7 to 10: per-surface attacks and tools |
 | `references/tooling.md` | Steps 3 to 8: scanner catalog, invocation, overlap, class |
 | `references/installer.md` | Step 3: install-flow contract and bundles |
@@ -312,7 +312,7 @@ NOT Raw scanner output is HARDENING until a path or repro is traced, so do not r
 
 | Agent | Role | Spawned |
 |-------|------|---------|
-| `scout` | Read-only recon: trust map, invariants, idiom census, repo-specific rules | Step 5, one per surface, parallel |
+| `sabot-scout` | Read-only recon: trust map, invariants, idiom census, repo-specific rules | Step 5, one per surface, parallel |
 | `fuzzer` | Authors harnesses, corpora, and vectors from recon's invariants; runs nothing | Step 7, one per surface, parallel |
 | `gremlin` | Executes scanners, synthesized rules, and harnesses per surface, and reads for what they miss | Step 8, one per surface node, parallel |
 | `triager` | Dedups, minimizes, and classifies crashes | Step 10, once per crash batch |

@@ -155,14 +155,14 @@ bd update <harness-wisp> --claim        # atomic, first-wins, sets assignee
 
 ### Who may close a surface node
 
-`scout`, `fuzzer`, and `gremlin` all write to the same surface node in sequence, so
+`sabot-scout`, `fuzzer`, and `gremlin` all write to the same surface node in sequence, so
 closing it is the one verb they cannot each decide for themselves. A closed node
 refuses `bd update --claim` ("issue not claimable: status closed") while its wisps
 still parent fine, so the work looks scheduled and never runs.
 
 | Agent | May set the node to | Must never |
 |---|---|---|
-| `scout` | `in_progress` while working, back to `open` when its artifacts are filed | `closed`; the fuzzer and gremlin still have to claim it |
+| `sabot-scout` | `in_progress` while working, back to `open` when its artifacts are filed | `closed`; the fuzzer and gremlin still have to claim it |
 | `fuzzer` | `in_progress`, back to `open` | `closed` |
 | `gremlin` | `in_progress`, back to `open` after filing its `sab-coverage` wisp | `closed` |
 | main thread | `closed`, at step 14 only | close a node before its `sab-coverage` wisp exists |
@@ -354,7 +354,7 @@ than silently dropped. The script flags any such wisp in a `stamping_gaps` list,
 the missing stamp is visible instead of costing a finding. (`--run-id <id>` still
 works as an alias that resolves the epic.)
 
-The same graph carries work between agents, since each of `scout`, `fuzzer`,
+The same graph carries work between agents, since each of `sabot-scout`, `fuzzer`,
 `gremlin`, `triager`, and `challenger` reads its inputs from the wisps a prior agent
 filed (see Handoff chain). Correlation needs no join table: the parent edge places
 each wisp on its surface under the epic, and the typed edges (`discovered-from`,

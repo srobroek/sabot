@@ -27,7 +27,7 @@ PKG = Path(__file__).resolve().parents[1]
 CLAUDE_MANIFEST = json.loads((PKG / ".claude-plugin/plugin.json").read_text())
 NATIVE_AGENTS = sorted((PKG / "agents").glob("*.md"))
 APM_AGENTS = sorted((PKG / ".apm/agents").glob("*.agent.md"))
-AGENT_NAMES = {"scout", "fuzzer", "gremlin", "triager", "challenger", "hardener"}
+AGENT_NAMES = {"sabot-scout", "fuzzer", "gremlin", "triager", "challenger", "hardener"}
 
 # Claude Code refuses these on a plugin-shipped agent; each grants authority the
 # installing user never reviewed.
@@ -65,6 +65,17 @@ def test_native_agents_keep_name_and_description():
         front = _frontmatter(path)
         assert f"name: {path.stem}" in front, f"{path.name} lost its name"
         assert "description:" in front, f"{path.name} lost its description"
+
+
+def test_apm_sources_name_matches_their_filename():
+    """The two trees are the same agent, so a rename that lands in one and not the
+    other ships a mismatched pair: the file resolves and the registered type does
+    not. `sabot-scout` was renamed out of a collision with omp's bundled `scout`,
+    and only the frontmatter decides which name a runtime registers."""
+    for path in APM_AGENTS:
+        stem = path.name[: -len(".agent.md")]
+        assert f"name: {stem}" in _frontmatter(path), \
+            f"{path.name} declares a name its filename does not match"
 
 
 def test_apm_sources_keep_permission_mode():

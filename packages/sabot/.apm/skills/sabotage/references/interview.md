@@ -28,7 +28,7 @@ rules forbid.
 | Tools + budget | 3 | decides coverage and wall-clock, and bounds the machine | "go" on an unseen tool set, or a budget the user never approved |
 | Remediation route | 4 | decides what step 15 does with a confirmed finding, and whether the run needs tracker access at all | asked only after the report, when the findings are already stale and the user has lost the context to choose |
 
-MUST Resolve all six core facts before spawning a scout. A campaign that starts under an unpinned scope produces findings for the wrong target and a coverage claim it cannot support.
+MUST Resolve all six core facts before spawning a sabot-scout. A campaign that starts under an unpinned scope produces findings for the wrong target and a coverage claim it cannot support.
 MUST Record every defaulted fact as a gap in the report. "Whole repo, because none was named" belongs there, since the user may have meant one module.
 
 ### Remediation route (core question 4)
@@ -142,13 +142,13 @@ re-interviewing. The target kind and base ref flow into `targeting.md`; the surf
 and budget become the surface nodes and the epic's `budget` metadata.
 
 The user's stated threat is stamped on the epic as `threat` metadata, where it
-orders the report and ranks which surface leads. Keep it out of the scout Brief. A
-scout told where the bug is stops censusing, so recon derives the repo's own threat
-model independently (see `recon.md` and `scout-brief.md`). The user's fear
+orders the report and ranks which surface leads. Keep it out of the sabot-scout Brief.
+A sabot-scout told where the bug is stops censusing, so recon derives the repo's own
+threat model independently (see `recon.md` and `scout-brief.md`). The user's fear
 prioritizes attention; the derived model is the map recon builds without a
 hypothesis.
 
-MUST Stamp the user's threat on the epic for prioritization and reporting, and keep it out of the scout Brief. A scout handed a suspected bug narrows its census to that guess and misses the deviations that census exists to find.
+MUST Stamp the user's threat on the epic for prioritization and reporting, and keep it out of the sabot-scout Brief. A sabot-scout handed a suspected bug narrows its census to that guess and misses the deviations that census exists to find.
 
 The remediation route is stamped on the epic too, as `remediation_route` plus, on the
 `ticket` route, the confirmed `tracker`, access method, and destination. Step 15 reads

@@ -80,7 +80,7 @@ MUST Enforce the run's memory, pid, and cpu budget as container flags, since a f
 MUST Run as a non-root user with `--cap-drop ALL` and `--security-opt no-new-privileges`, so a container escape has nothing to escalate to.
 MUST Write findings only to `/artifacts`, the single writable path whose contents survive the container.
 MUST Direct every build and test toolchain away from the read-only target: `run-contained.sh` sets `--workdir /scratch`, puts `TMPDIR`/`HOME` on the tmpfs and `CARGO_TARGET_DIR`/`GOCACHE` under `/artifacts/.build`, and the command after `--` reads the target at `/target` (e.g. `cargo test --no-fail-fast --manifest-path /target/Cargo.toml`). A `cargo test` left to write `target/` in the read-only mount fails, which reads as a broken harness rather than the isolation working.
-MUST Set a UTF-8 locale (`LANG`/`LC_ALL=C.UTF-8`, `PYTHONUTF8=1`), which the wrapper does. Under the default POSIX locale a python scanner dies on the first non-ASCII byte of a rule file: `opengrep` raised `'ascii' codec can't decode byte 0xe2` from `config_resolver.py:241` and exited 2 having scanned 0 files, where the same invocation under UTF-8 returned 41 findings across 14 files. `scout` synthesizes rule files, so a curly quote in a synthesized rule is the expected case.
+MUST Set a UTF-8 locale (`LANG`/`LC_ALL=C.UTF-8`, `PYTHONUTF8=1`), which the wrapper does. Under the default POSIX locale a python scanner dies on the first non-ASCII byte of a rule file: `opengrep` raised `'ascii' codec can't decode byte 0xe2` from `config_resolver.py:241` and exited 2 having scanned 0 files, where the same invocation under UTF-8 returned 41 findings across 14 files. `sabot-scout` synthesizes rule files, so a curly quote in a synthesized rule is the expected case.
 
 ### `/artifacts` is a volume that gets copied out, and `/scratch` is RAM
 
@@ -490,7 +490,7 @@ the run graph or spawning any agent. A partial "static-only" run is not offered,
 because it would present an incomplete audit as a completed one and, for a compiling
 scanner, would run the target's build code on the host.
 
-MUST Probe for a container runtime at step 0 (part of the `install-tools.sh --probe` preflight) and, when none is present, ABORT the whole campaign with a loud message naming the missing runtime and a non-zero exit. Do not open the run graph, do not spawn a scout, do not run a host-side scan.
+MUST Probe for a container runtime at step 0 (part of the `install-tools.sh --probe` preflight) and, when none is present, ABORT the whole campaign with a loud message naming the missing runtime and a non-zero exit. Do not open the run graph, do not spawn a sabot-scout, do not run a host-side scan.
 MUST Abort the run when `bd` is absent too, per `beads-store.md`: no run graph means no durable state, so there is no campaign to run. Both the runtime and `bd` are hard preconditions, not degradable ones.
 MUST Never fall back to host execution or a static-only subset when no container is available. A host-only run is the exact unbounded risk the container exists to prevent, and a partial run presents an incomplete audit as a completed campaign.
 NOT Never weaken the container contract (add network, drop the mem cap, run root) to make a harness pass. A harness that only runs unconfined is a harness that does not run.

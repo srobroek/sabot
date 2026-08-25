@@ -1,6 +1,6 @@
 version: 1
 agents:
-  scout:
+  sabot-scout:
     codex:
       model: gpt-5.6-luna
       reasoning_effort: xhigh

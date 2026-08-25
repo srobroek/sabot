@@ -1,10 +1,10 @@
-# Scout Brief Template
+# Sabot-Scout Brief Template
 
-Construct one Brief per surface for step 5. `scout` derives this repo's own threat
-model. Pass facts only, and no hypothesis about where the bugs are, since a scout
-told what to look for stops looking.
+Construct one Brief per surface for step 5. `sabot-scout` derives this repo's own
+threat model. Pass facts only, and no hypothesis about where the bugs are, since a
+sabot-scout told what to look for stops looking.
 
-Spawn the scouts in parallel, one message with several Agent calls, one per
+Spawn the sabot-scouts in parallel, one message with several Agent calls, one per
 detected surface.
 
 ---
@@ -103,7 +103,7 @@ MUST Stamp `validated:false` and hand the rule forward disabled when a fixture b
 - Hand forward an invariant with no file:line behind it.
 
 ## Return
-The Scout Output format from your agent definition. Every artifact carries a
+The Sabot-Scout Output format from your agent definition. Every artifact carries a
 file:line, every census carries both counts, and every rule carries its fixture
 results.
 ```
@@ -114,12 +114,12 @@ results.
 
 - **Withhold your hypothesis.** Naming a suspected bug narrows the census, and the
   census is where the finding lives.
-- **Point at the repo's self-documentation explicitly.** A scout that skips the
+- **Point at the repo's self-documentation explicitly.** A sabot-scout that skips the
   docs re-derives guarantees the project already stated, and misses the ones it
   states and breaks.
-- **Pass the pack list, and let the scout aim it.** Aiming needs the threat model
-  the scout is building, so it cannot be decided in advance.
-- **One scout per surface.** Split a surface exceeding roughly 5k LOC by subtree,
+- **Pass the pack list, and let the sabot-scout aim it.** Aiming needs the threat
+  model the sabot-scout is building, so it cannot be decided in advance.
+- **One sabot-scout per surface.** Split a surface exceeding roughly 5k LOC by subtree,
   and give each a narrowed file list, since a census over too much code degrades to
   a guess.
 - **Recon before authoring, always.** A `fuzzer` handed no invariants writes
