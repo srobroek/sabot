@@ -5,11 +5,11 @@
 
 ### ⚠ BREAKING CHANGES
 
-* **sabot:** the `scout` agent is now `sabot-scout`. It collided with omp's bundled `scout`, and a user plugin outranks a bundled agent, so every `scout` invocation silently got sabot's `opus` recon agent rather than the bundled cheap recon leaf. A Brief, formula, or prompt naming `scout` or `sabot:scout` now resolves nothing; use `sabot-scout` and `sabot:sabot-scout`. `references/scout-brief.md` keeps its path.
+* **sabot:** the `scout` agent is now `sabot-scout` ([#53](https://github.com/srobroek/sabot/issues/53)). It collided with omp's bundled `scout`, and a user plugin outranks a bundled agent, so every `scout` invocation silently got sabot's `opus` recon agent rather than the bundled cheap recon leaf. A Brief, formula, or prompt naming `scout` or `sabot:scout` now resolves nothing; use `sabot-scout` and `sabot:sabot-scout`. `references/scout-brief.md` keeps its path.
 
 ### Refactors
 
-* **sabot:** rename the scout agent out of its collision with omp's bundled scout
+* **sabot:** rename the scout agent out of its collision with omp's bundled scout ([#53](https://github.com/srobroek/sabot/issues/53))
 
 ## [0.5.2](https://github.com/srobroek/sabot/compare/v0.5.1...v0.5.2) (2026-08-22)
 
