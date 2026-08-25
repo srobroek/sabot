@@ -135,7 +135,7 @@ duplicates a registry pack and rots silently (a mixed-language rule that passes
 | Source | What | Coverage |
 |---|---|---|
 | Baked rule packs | the semgrep rule trees under `/opt/sabot-db/semgrep-rules/<lang>`, plus bandit, gosec, clippy, shellcheck | generic dangerous patterns, at the revision baked into the image |
-| Recon-synthesized | rules `scout` writes and validates during recon, from this repo's own invariants and the agentic-pattern list in `surfaces/agents.md` | this repo's contracts, and agentic patterns no registry pack covers |
+| Recon-synthesized | rules `sabot-scout` writes and validates during recon, from this repo's own invariants and the agentic-pattern list in `surfaces/agents.md` | this repo's contracts, and agentic patterns no registry pack covers |
 | Shipped corpora | `corpora/prompt-injection.md`, `scripts/fuzz-cli.py` | payload classes and the decision-contract harness |
 
 MUST Point `--config` at the baked tree for the detected language (`/opt/sabot-db/semgrep-rules/<lang>`). A registry shorthand (`p/rust`, `p/python`, `--config auto`) resolves over the network, so under `--network none` it exits `OG_RC=2` having scanned nothing. Record that as NOT EXECUTED, "requires network", and never as zero findings or a retry.

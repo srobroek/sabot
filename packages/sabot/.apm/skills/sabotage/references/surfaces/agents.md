@@ -15,7 +15,7 @@ by a path glob: an import of `langgraph`, `langchain`, `crewai`, `llama_index`, 
 call; a prompt assembled from a variable and sent to a completion; `exec`, `eval`, or
 `subprocess` on a model response; a tool/function-calling definition; fetched content
 flowing into a prompt. This is a production agent in `src/`, and its injection and
-tool-grant paths are usually the real target. The `scout` finds it as part of recon
+tool-grant paths are usually the real target. The `sabot-scout` finds it as part of recon
 (see the pattern list below), so the surface is present whenever those signatures
 appear in app code, with no `.claude`/`.mcp.json` needed.
 
@@ -45,7 +45,7 @@ MUST Scan the user's agentic-tooling config only when the user names the path as
 | `scripts/fuzz-cli.py` | default-on | local | corpus mode against a hook or MCP server, see `harnesses.md` | a hook or server that crashes, hangs, or misparses a payload | the only executable check on this surface |
 | `references/agentic-fuzz.md` (promptfoo) | opt-in | local | `npx --yes promptfoo@latest redteam generate` then `eval` against a real-invocation target script | generated attacks that LAND: repo-prompt-injection, verifier-sabotage, sandbox escape, MCP abuse | needs a model to generate and grade; the target itself is a local script |
 | `references/corpora/prompt-injection.md` | default-on | local | `fuzzer` builds scenarios from it; `gremlin` runs them against the target definition | instruction override, exfil paths, tool coercion | the payload source of truth |
-| semgrep (recon-synthesized) | opt-in | local | `scout` writes rules for the code side during recon (see the agentic pattern list below), then `opengrep --config <rule> --json <files>` | a prompt assembled by string concatenation, an unpinned MCP `@latest` server, a secret committed in an agent config | no registry pack covers these agentic patterns, so recon synthesizes them per repo |
+| semgrep (recon-synthesized) | opt-in | local | `sabot-scout` writes rules for the code side during recon (see the agentic pattern list below), then `opengrep --config <rule> --json <files>` | a prompt assembled by string concatenation, an unpinned MCP `@latest` server, a secret committed in an agent config | no registry pack covers these agentic patterns, so recon synthesizes them per repo |
 | `jq` schema read | default-on | local | `jq '.permissions, .hooks, .mcpServers' <settings.json>` | over-broad allowlists, wildcard permissions, unpinned MCP servers | mechanical, so it needs no judgement |
 | gitleaks | default-on | local | `gitleaks detect --no-git --report-format json` | credentials in an MCP config or agent definition | overlaps the repo's own `secrets-scan` package, which is preferred when present |
 | agentic-radar | opt-in | local | `uvx agentic-radar` | a static map of an agentic system's tools and flows | upstream quiet since 2025-11 |
@@ -61,7 +61,7 @@ MUST Decline snyk-agent-scan's prompt to launch stdio servers unless the user ex
 
 ## Agentic patterns for recon to synthesize (no registry pack covers these)
 
-`scout` writes and validates a rule per applicable pattern during recon, rather than
+`sabot-scout` writes and validates a rule per applicable pattern during recon, rather than
 the skill shipping a static file that rots:
 
 | Pattern | Shape | Where it bites |
@@ -73,7 +73,7 @@ the skill shipping a static file that rots:
 | exec of model output | `exec`/`eval`/`subprocess` on a completion/response variable | running whatever the model was persuaded to emit |
 | Memory write of unvalidated content | model or fetched text written to a durable memory store | one session plants a fact later sessions trust |
 
-MUST Have `scout` synthesize these as validated rules during recon, and treat a repo with none of them present as covered rather than a gap.
+MUST Have `sabot-scout` synthesize these as validated rules during recon, and treat a repo with none of them present as covered rather than a gap.
 
 ## Attack checklist
 

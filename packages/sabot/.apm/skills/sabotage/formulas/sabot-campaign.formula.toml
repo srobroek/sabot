@@ -136,7 +136,7 @@ worktree checkout and record the checkout path on the epic. Detect surfaces and 
 one surface node per surface, labelled `sab-surface,sab-audit,non-work`.
 
 Record every entry point as a bare `file:line` with NO threat annotation: annotating
-here is the scout's judgement borrowed early, and it aims recon at what the dispatcher
+here is the sabot-scout's judgement borrowed early, and it aims recon at what the dispatcher
 already believed.
 
 Then size the nodes: stamp `coverage_ratio` on every node before anything spawns. A
@@ -226,10 +226,10 @@ id = "recon"
 title = "step 5 recon {{run_id}}"
 type = "task"
 needs = ["pre-pass"]
-labels = ["sab-audit", "non-work", "agent:scout"]
+labels = ["sab-audit", "non-work", "agent:sabot-scout"]
 description = """Step 5. LOAD references/recon.md; Brief from references/scout-brief.md.
 
-Spawn one `scout` per surface, in parallel. Each derives THIS repo's own threat model:
+Spawn one `sabot-scout` per surface, in parallel. Each derives THIS repo's own threat model:
 what it claims about itself, where its trust boundaries sit, how it does things and
 which places deviate. Each writes and validates repo-specific semgrep or ast-grep
 rules, and files a rule wisp per rule.
@@ -242,7 +242,7 @@ and stay quiet on a known-negative one, with BOTH counts pasted from the real to
 `rules_loaded` comes from the tool's own output, never from the file count. A rule that
 failed its fixtures is stamped `validated:false` and handed forward DISABLED.
 
-The scout reads and never edits, scans for no findings, and reports no
+The sabot-scout reads and never edits, scans for no findings, and reports no
 vulnerabilities.
 
 Completion: recon artifacts in the artifacts dir, and a rule wisp per rule carrying
@@ -250,7 +250,7 @@ all seven fields."""
 
 [steps.metadata]
 skill_hints = "sabot:sabotage"
-execution_agent_type = "sabot:scout"
+execution_agent_type = "sabot:sabot-scout"
 
 [[steps]]
 id = "closed-classes"

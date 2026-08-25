@@ -78,7 +78,7 @@ MUST Decide node size and parallelism together. Each node holds a container for 
 
 MUST Treat a file count of ZERO as a claim to verify rather than an empty surface, and re-run the count with the tool's own hidden-file and ignore-file filters disabled. `fd` and `rg` both skip dotdirs and honour `.gitignore` by default, so a target whose code lives under a dotted directory counts as empty and its surface reads as absent. Measured: `fd -e sh . packages/sabot` returned 0 while `fd -u -e sh .` returned 10, every one of them under `.apm/`; a campaign that trusted the first number would have reported a clean shell audit of ten unopened files. This is the same shape as the empty-query rule in `beads-store.md`, applied to detection instead of to `bd`.
 MUST Record the entry points before step 5. A fuzzer given no entry points invents its own scope and writes harnesses for code nobody calls.
-MUST Record each entry point as a bare `file:line` with no threat annotation. Do not mark which entries "map onto the stated threat", label a parser "hostile-response", or rank them by suspected relevance. That annotation is the orchestrator's hypothesis, and it reaches the scout through the entry-point list and narrows the census to the guessed spot. The user's threat orders the REPORT (stamped on the epic), never the recon input.
+MUST Record each entry point as a bare `file:line` with no threat annotation. Do not mark which entries "map onto the stated threat", label a parser "hostile-response", or rank them by suspected relevance. That annotation is the orchestrator's hypothesis, and it reaches the sabot-scout through the entry-point list and narrows the census to the guessed spot. The user's threat orders the REPORT (stamped on the epic), never the recon input.
 
 ## Step 3: probe, propose, wait
 
@@ -132,7 +132,7 @@ itself.
 | Baseline test suite (what already fails, per `surfaces/robustness.md`) | one run | `baseline_test_ref` |
 | Repo self-read: the falsifiable guarantees, documented limits, `SECURITY.md` scope, and git-incident notes | one read | `self_read_ref` |
 
-Each scout then reads `self_read_ref` instead of re-parsing the docs, and each
+Each sabot-scout then reads `self_read_ref` instead of re-parsing the docs, and each
 gremlin cites `global_scan_refs` instead of re-running a whole-tree scanner. A
 surface gremlin runs only its own surface-specific scanners.
 

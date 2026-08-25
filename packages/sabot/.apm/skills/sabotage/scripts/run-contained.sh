@@ -68,9 +68,9 @@ set -euo pipefail
 # scanner under the default POSIX locale dies on the first non-ASCII byte of a rule file.
 # Measured: opengrep raised `'ascii' codec can't decode byte 0xe2` from
 # config_resolver.py:241 and exited 2 having scanned 0 files; the same invocation under a
-# UTF-8 locale returned 41 findings across 14 files. `scout` synthesizes rule files and a
-# synthesized rule routinely carries a curly quote or a dash, so this is a defect the
-# skill triggers in itself.
+# UTF-8 locale returned 41 findings across 14 files. `sabot-scout` synthesizes rule files
+# and a synthesized rule routinely carries a curly quote or a dash, so this is a defect
+# the skill triggers in itself.
 #
 # An exit code is NOT sufficient evidence the harness ran: this environment has a
 # host wrapper that has been measured returning rc=0 while printing a fatal error,
@@ -393,9 +393,9 @@ fi
 # credited with a file some earlier run wrote. Measured: opengrep raised
 # `'ascii' codec can't decode byte 0xe2` from config_resolver.py:241 on a rule file
 # containing a curly quote, exited 2 having scanned 0 files, and the caller then read the
-# previous invocation's JSON and recorded "0 findings". `scout` synthesizes those rule
-# files, so the skill triggers this on itself. The post-run half of the check is below the
-# copy-out: a fresh file, parseable JSON, and a nonzero scanned-file count.
+# previous invocation's JSON and recorded "0 findings". `sabot-scout` synthesizes those
+# rule files, so the skill triggers this on itself. The post-run half of the check is
+# below the copy-out: a fresh file, parseable JSON, and a nonzero scanned-file count.
 for ej in ${EXPECT_JSON[@]+"${EXPECT_JSON[@]}"}; do
   PREAMBLE="$PREAMBLE"' rm -f "/artifacts/'"$ej"'";'
   rm -f "$ARTIFACTS/$ej"

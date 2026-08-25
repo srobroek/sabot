@@ -109,7 +109,7 @@ codex: $sabotage find security holes in my repo's ci/cd pipeline
 
 It runs a five-agent campaign per surface:
 
-1. scout: recon per surface, producing the trust map, invariants, idiom census, and repo-specific rules
+1. sabot-scout: recon per surface, producing the trust map, invariants, idiom census, and repo-specific rules
 2. fuzzer: writes harnesses, seed corpora, and attack vectors
 3. gremlin: executes scanners and harnesses inside a container, reads for what they miss
 4. triager: dedups crashes, minimizes to a smallest reproducing input, classifies
@@ -130,7 +130,7 @@ flowchart TB
     Q["🛑 <b>Interview</b><br/>target · what you fear · surfaces · tools · budget"]
     Q --> OPEN["<b>Open the run</b> · epic + one node per surface<br/>provision images, read the repo's security config, pre-pass"]
 
-    OPEN --> SCOUT["<b>scout</b> · trust map, invariants, repo-specific rules"]
+    OPEN --> SCOUT["<b>sabot-scout</b> · trust map, invariants, repo-specific rules"]
     SCOUT --> FUZZER["<b>fuzzer</b> · harnesses, corpora, vectors"]
     FUZZER --> GREMLIN["<b>gremlin</b> · runs it all in a container, reads for the rest"]
 
@@ -269,7 +269,7 @@ picks which apply to a target and builds the harness that aims them. Note that t
 | `.../scripts/fuzz-cli.py` | a JSON-stdin/CLI adversarial harness for any hook or guard |
 | `.../scripts/run-contained.sh` | the container wrapper every execution phase runs through |
 | `.../references/containers/` | per-surface Dockerfiles (rust, python, node), extensible |
-| `packages/sabot/.apm/agents/` | scout, fuzzer, gremlin, triager, challenger, hardener |
+| `packages/sabot/.apm/agents/` | sabot-scout, fuzzer, gremlin, triager, challenger, hardener |
 
 
 
