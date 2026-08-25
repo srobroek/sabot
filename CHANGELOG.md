@@ -11,6 +11,17 @@
 
 * **sabot:** rename the scout agent out of its collision with omp's bundled scout ([#53](https://github.com/srobroek/sabot/issues/53))
 
+## [0.6.0](https://github.com/srobroek/sabot/compare/v0.5.2...v0.6.0) (2026-08-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sabot:** the `scout` agent is now `sabot-scout`. A Brief, formula, or prompt naming `scout` or `sabot:scout` resolves nothing; use `sabot-scout` and `sabot:sabot-scout`.
+
+### Refactors
+
+* **sabot:** rename the scout agent to sabot-scout ([#53](https://github.com/srobroek/sabot/issues/53)) ([546cb1d](https://github.com/srobroek/sabot/commit/546cb1d3e80ba7db701c16135d7f26953f6b3336))
+
 ## [0.5.2](https://github.com/srobroek/sabot/compare/v0.5.1...v0.5.2) (2026-08-22)
 
 
