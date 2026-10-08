@@ -22,7 +22,7 @@ version-to-version state file.
 | `scripts/fuzz-cli.py` | default-on | local | see `harnesses.md` | crash, hang, non-parsable output, contract violation on any CLI or JSON-stdin program | the workhorse of this surface |
 | hypothesis | default-on | local | `pytest --hypothesis-show-statistics` on the property tests `sabot-fuzzer` wrote | Python: invariant violations across generated inputs | property testing finds classes a fixed corpus never reaches |
 | proptest or quickcheck | default-on | local | `cargo test` on the property tests `sabot-fuzzer` wrote | Rust: same | native to the language |
-| fast-check | default-on | local | `npx vitest run` on the property tests | JS/TS: same | native |
+| fast-check | default-on | local | the project-local runner, e.g. `./node_modules/.bin/vitest run`, on the property tests | JS/TS: same | native; `npx` cannot fetch under `--network none`, so the runner must already be installed in the target |
 | `go test -fuzz` | default-on | local | `go test -fuzz=Fuzz -fuzztime=<budget>` | Go: crashers plus corpus growth | native, and the corpus persists in testdata |
 | schemathesis | opt-in | local | `schemathesis run --dry-run <spec>` | API contract violations generated from an OpenAPI spec, off unless a spec exists | requires a local instance to run for real, so dry-run only |
 | `timeout` plus `ulimit` | default-on | local | wrap every campaign, see `fuzzing.md` | hangs and runaway memory, distinguishing them from crashes | the budget enforcement primitive |
@@ -78,11 +78,11 @@ Severity here is about blast radius rather than exploitability:
 | Level | Meaning on this surface |
 |---|---|
 | CRITICAL | data loss or corruption on a plausible input, or an unrecoverable state a user cannot escape |
-| HIGH | a crash or hang in a path users hit regularly, a partial write leaving inconsistent state, or a silent wrong answer |
+| HIGH | a crash or hang in a path users hit regularly, a partial write leaving inconsistent state, or a silent wrong answer a caller acts on |
 | MEDIUM | a crash on malformed input a user could plausibly supply, a resource leak under repetition, or a non-idempotent command that duplicates work |
 | LOW | a crash on input no realistic caller produces, an unclear error message, or a cosmetic ordering instability |
 
-MUST Report a silent wrong answer at HIGH or above. A crash is visible and a wrong answer is not, so the quiet failure is the worse one.
+DEFAULT Raise a silent wrong answer one level above the same defect failing loudly, since a crash is visible and a wrong answer is not. Visibility is a factor in the blast radius, not a floor: a wrong answer nobody acts on stays LOW.
 
 ## False-positive traps
 

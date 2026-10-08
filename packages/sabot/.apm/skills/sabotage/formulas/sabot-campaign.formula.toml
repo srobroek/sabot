@@ -46,7 +46,7 @@
 # still keeps an edge.
 
 formula = "sabot-campaign"
-description = "Sabot campaign {{run_id}} against {{target}}: attack across five surfaces, prove or refute each finding, report on two axes, and patch only on approval"
+description = "Sabot campaign {{run_id}} against {{target}}: attack across seven surfaces, prove or refute each finding, report on two axes, and patch only on approval"
 type = "workflow"
 
 [vars.run_id]

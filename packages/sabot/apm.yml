@@ -2,27 +2,20 @@ name: sabot
 version: 0.6.0
 description: >-
   Offensive and robustness auditor. Attacks a codebase, script, hook, agent, or
-  config across five surfaces (code-level memory and logic, shell scripts and
-  hooks, agents and skills and prompts, infra and config and supply chain, plus
-  non-security robustness against malformed data and edge cases), then proves or
-  refutes every finding. Starts with recon: reads what the repo claims about
-  itself, maps its trust boundaries, censuses its own idioms to find the places
-  that deviate, and synthesizes validated semgrep and ast-grep rules for that
-  specific codebase. Standard scanners and packs (semgrep, bandit, gosec,
-  cargo-audit, zizmor, checkov, trivy, shellcheck, osv-scanner) are borrowed as
-  they come, and recon builds the harness that aims them. Writes fuzz harnesses,
-  seed corpora, and regression tests, then runs bounded local fuzz campaigns
-  (cargo-fuzz, atheris, go test -fuzz, hypothesis, AFL++) under a per-run budget
-  the user approves. A rule behind a confirmed finding graduates into the repo's
-  own lint config, so the bug class stays checked after the campaign ends. Run
-  state and every finding live in beads, with agents handing work through wisps,
-  so a campaign survives a crash and resumes. Includes a reusable JSON-stdin and
-  CLI fuzz harness plus a prompt-injection corpus. Attacks only local code the
-  user owns, with live DoS and public endpoints out of scope. Every finding
-  carries two axes, evidence tier and impact, and is demoted rather than
-  deleted. Advisory by design: harnesses, rules, and regression tests are
-  written, while product code is patched only on explicit approval. Requires the
-  beads package and the bd CLI for run state.
+  config across seven surfaces (code-level memory and logic, shell scripts and
+  hooks, agents and prompts, infra and supply chain, web and frontend, build and
+  toolchain, plus non-security robustness against malformed data and edge
+  cases), then proves or refutes every finding. Starts with recon: maps the
+  repo's trust boundaries, censuses its own idioms, and synthesizes validated
+  opengrep and ast-grep rules for that codebase, alongside stock scanners
+  (opengrep, bandit, gosec, cargo-audit, zizmor, checkov, trivy, shellcheck,
+  osv-scanner). Writes fuzz harnesses, seed corpora, and regression tests, then
+  runs bounded fuzz campaigns (cargo-fuzz, atheris, go test -fuzz, hypothesis,
+  jazzer.js) in a network-denied container under a budget the user approves.
+  Run state lives in beads, so a campaign survives a crash and resumes. Every
+  finding carries an evidence tier and an impact, and is demoted rather than
+  deleted. Product code and lint config change only on explicit approval.
+  Requires the beads package and the bd CLI for run state.
 author: Sjors Robroek
 license: Apache-2.0
 type: hybrid

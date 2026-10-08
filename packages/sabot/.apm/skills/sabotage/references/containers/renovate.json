@@ -5,11 +5,12 @@
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/Dockerfile\\.[a-z]+$/", "/layers/[a-z]+\\.sh$/"],
+      "managerFilePatterns": ["/Dockerfile\\.[a-z][a-z-]*$/", "/layers/[a-z][a-z-]*\\.sh$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>[a-z-]+?) depName=(?<depName>[^\\s]+?)\\s+RUN .*?(?:-{2}version|==|@)\\s*(?<currentValue>[0-9][^\\s\"']*)",
-        "# renovate: datasource=(?<datasource>[a-z-]+?) depName=(?<depName>[^\\s]+?)\\s+(?:ARG\\s+)?[A-Za-z_][A-Za-z0-9_]*=(?<currentValue>[0-9][^\\s\"']*)"
+        "# renovate: datasource=(?<datasource>[a-z-]+?) depName=(?<depName>[^\\s]+?)\\s+RUN .*?(?:-{2}version|==|@)\\s*v?(?<currentValue>[0-9][^\\s\"']*)",
+        "# renovate: datasource=(?<datasource>[a-z-]+?) depName=(?<depName>[^\\s]+?)\\s+(?:ARG\\s+)?[A-Za-z_][A-Za-z0-9_]*=v?(?<currentValue>[0-9][^\\s\"']*)"
       ],
+      "extractVersionTemplate": "^v?(?<version>.+)$",
       "versioningTemplate": "semver"
     }
   ]

@@ -4,8 +4,8 @@ Construct one Brief per surface for step 5. `sabot-scout` derives this repo's ow
 threat model. Pass facts only, and no hypothesis about where the bugs are, since a
 sabot-scout told what to look for stops looking.
 
-Spawn the sabot-scouts in parallel, one message with several Agent calls, one per
-detected surface.
+Spawn the sabot-scouts in parallel in one batch (several Agent calls in one message
+in Claude Code, one `task` call with several tasks in OMP), one per detected surface.
 
 ---
 
@@ -15,7 +15,7 @@ this codebase assumes about itself and turn each assumption into something testa
 You find no vulnerabilities.
 
 ## Scope
-- Surface: <code | shell | agents | infra | robustness>
+- Surface: <code | shell | agents | infra | web | build | robustness>
 - Files: <explicit resolved paths for this surface>
 - Working directory: <repo root, or the worktree path for a ref target>
 - Exclude: <generated, vendored, fixtures>

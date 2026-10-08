@@ -104,6 +104,25 @@ def test_shrinkray_probe_requires_real_reduction():
     assert 'test "$(wc -c < big.txt)" -lt 30' in JOINED
 
 
+def test_semgrep_is_not_installed():
+    """install-tools.sh dropped semgrep because opengrep in the base gave the same
+    output, yet this image still installed and asserted it."""
+    assert "semgrep" not in JOINED.replace("semgrep was dropped", "")
+
+
+def test_first_tier_and_atheris_are_pinned():
+    for pin in ("'hypothesis==6.145.1'", "bandit==", "ruff==", "atheris=="):
+        assert pin in JOINED, f"{pin} is unpinned; a campaign stops being reproducible"
+
+
+def test_hypofuzz_replay_generates_nothing():
+    """A plain pytest replay finds n=0 for `assert n != 0` by its own generation, so it
+    passed whether or not HypoFuzz saved anything. Only a reuse-only replay reads the
+    saved example and nothing else."""
+    assert "[Phase.reuse] if os.environ.get(\"SABOT_REPLAY_ONLY\")" in JOINED
+    assert "! SABOT_REPLAY_ONLY=1 pytest -q test_seeded.py" in JOINED
+
+
 def test_matrix_records_the_measured_results():
     matrix = MATRIX.read_text()
     for claim in (

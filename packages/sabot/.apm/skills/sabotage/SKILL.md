@@ -5,7 +5,7 @@ description: Attack code, scripts, hooks, or agents for vulns and robustness bug
 
 # Sabot
 
-Attack a target across five surfaces, prove each finding with a traced path or a
+Attack a target across seven surfaces, prove each finding with a traced path or a
 reproducing input, and report on two axes: evidence and impact. Product code stays
 untouched until step 15, which requires explicit approval; harnesses and regression
 tests are written freely.

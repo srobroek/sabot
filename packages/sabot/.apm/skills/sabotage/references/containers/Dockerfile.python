@@ -1,4 +1,5 @@
-# Python surface. Base + atheris/hypothesis/bandit/ruff/semgrep.
+# Python surface. Base + atheris/hypothesis/bandit/ruff. opengrep, in the base, is the
+# pattern scanner; semgrep was dropped because it gave opengrep's output again.
 #
 # atheris is the coverage-guided fuzzer, and it is the only tool here that builds
 # from source: its wheel links libFuzzer, so the build needs clang, the matching
@@ -19,9 +20,10 @@ FROM ${BASE}
 USER root
 
 # Pure-python tools first, so a toolchain problem in the atheris layer cannot take
-# the static scanners down with it.
+# the static scanners down with it. Pinned, as every tier is, so a campaign is
+# reproducible; hypothesis matches the HypoFuzz pin below.
 RUN pip3 install --no-cache-dir --break-system-packages \
-      hypothesis bandit ruff semgrep
+      'hypothesis==6.145.1' bandit==1.9.4 ruff==0.16.10
 
 # atheris and its build toolchain. LIBFUZZER_LIB names the no_main archive (atheris
 # supplies its own main). The arch suffix is resolved at build time so the layer
@@ -38,9 +40,9 @@ RUN set -eux; \
     fuzzer_lib="/usr/lib/llvm-${LLVM_MAJOR}/lib/clang/${LLVM_MAJOR}/lib/linux/libclang_rt.fuzzer_no_main-${arch}.a"; \
     test -f "$fuzzer_lib"; \
     CLANG_BIN=/usr/local/bin/clang CC=clang CXX=clang++ LIBFUZZER_LIB="$fuzzer_lib" \
-      pip3 install --no-cache-dir --break-system-packages atheris; \
+      pip3 install --no-cache-dir --break-system-packages atheris==3.1.0; \
     python3 -c 'import atheris'; \
-    bandit --version; ruff --version; semgrep --version; \
+    bandit --version; ruff --version; \
     python3 -c 'import hypothesis; print(hypothesis.__version__)'
 
 # The generator and reducer tier. Split from the block above for the same reason that
@@ -94,6 +96,12 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 # database with no failing entry to replay, and the failing one must leave an entry that
 # `pytest` then reproduces without any fuzzing of its own.
 #
+# That replay runs with `phases=[Phase.reuse]` (SABOT_REPLAY_ONLY), so it reads the
+# example database and generates nothing. A plain `pytest` replay proved nothing: its own
+# generate phase finds n=0 for `assert n != 0` in milliseconds, so it passed with an
+# empty database exactly as it passed with HypoFuzz's saved example. The decorators are
+# identical in both runs, so the database key HypoFuzz wrote is the one pytest reads.
+#
 # The passing property is `isinstance(n, int)` and not a bound like `n < 10**9`, because
 # `st.integers()` is unbounded and HypoFuzz DOES exceed any such bound: that first draft
 # failed this probe by finding a real counterexample.
@@ -126,14 +134,14 @@ RUN set -eux; \
         tail -20 clean-replay.log >&2; exit 1; }; \
     rm -rf .hypothesis; \
     \
-    printf 'from hypothesis import given, strategies as st\n\n@given(st.integers())\ndef test_seeded(n):\n    assert n != 0\n' > test_seeded.py; \
+    printf 'import os\nfrom hypothesis import Phase, given, settings, strategies as st\n\nPHASES = [Phase.reuse] if os.environ.get("SABOT_REPLAY_ONLY") else list(Phase)\n\n@settings(phases=PHASES)\n@given(st.integers())\ndef test_seeded(n):\n    assert n != 0\n' > test_seeded.py; \
     timeout 90 hypothesis fuzz -n 1 --no-dashboard -- test_seeded.py > seeded.log 2>&1 || true; \
-    ! pytest -q test_seeded.py > seeded-replay.log 2>&1 || \
-      { echo "sabot python: hypofuzz did not record the seeded n=0 counterexample" >&2; exit 1; }; \
+    ! SABOT_REPLAY_ONLY=1 pytest -q test_seeded.py > seeded-replay.log 2>&1 || \
+      { echo "sabot python: hypofuzz did not save the seeded n=0 counterexample" >&2; exit 1; }; \
     grep -q 'Falsifying example: test_seeded' seeded-replay.log || \
       { echo "sabot python: the seeded failure did not replay from the example database" >&2; \
         tail -20 seeded-replay.log >&2; exit 1; }; \
-    echo "hypofuzz: replayed the seeded counterexample from the example database"; \
+    echo "hypofuzz: replayed the saved counterexample with generation off"; \
     \
     schemathesis --version; \
     \
