@@ -11,6 +11,14 @@
 
 * **sabot:** rename the scout agent out of its collision with omp's bundled scout ([#53](https://github.com/srobroek/sabot/issues/53))
 
+## [0.6.1](https://github.com/srobroek/sabot/compare/v0.6.0...v0.6.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **sabot:** apply the plugin review decisions ([#56](https://github.com/srobroek/sabot/issues/56)) ([fde778d](https://github.com/srobroek/sabot/commit/fde778d28256c6b929e0827273b9334b3515fa64))
+* **sabot:** expand PEP 735 includes, quote contained build paths, and refuse unusable vectors ([#58](https://github.com/srobroek/sabot/issues/58)) ([df61303](https://github.com/srobroek/sabot/commit/df61303059e0e85cbc39bca387420235efe8a515))
+
 ## [0.6.0](https://github.com/srobroek/sabot/compare/v0.5.2...v0.6.0) (2026-08-25)
 
 
