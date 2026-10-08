@@ -176,16 +176,9 @@ def test_no_gate_outlives_the_step_it_approves(path):
 
     orphaned = []
     for gate in gates:
-        # A gate guards whichever step names it in `needs`, or the step that shares its
-        # number when nothing does.
+        # A gate guards whichever step names it in `needs`; the blocking test below makes
+        # naming it mandatory.
         guarded = [s for s in steps if gate["id"] in (s.get("needs") or [])]
-        if not guarded:
-            num = re.match(r"step (\d+)", gate["title"])
-            if num:
-                guarded = [s for s in steps
-                           if s is not gate
-                           and s["title"].startswith(f"step {num.group(1)} ")
-                           and not s.get("gate")]
         for target in guarded:
             for values in combinations():
                 gate_on = step_is_active(conditions.get(gate["id"]), values)
@@ -199,6 +192,83 @@ def test_no_gate_outlives_the_step_it_approves(path):
         f"nothing to approve: {orphaned}. Make each gate's condition at least as "
         "restrictive as its target's."
     )
+
+
+def _active_ancestors(steps, conditions, values, step_id):
+    """Every active step `step_id` transitively waits on under one var assignment.
+
+    bd drops a `needs` edge whose target was filtered out, so only active targets count.
+    """
+    by_id = {s["id"]: s for s in steps}
+    seen, stack = set(), [step_id]
+    while stack:
+        for need in by_id[stack.pop()].get("needs") or []:
+            if need not in seen and step_is_active(conditions.get(need), values):
+                seen.add(need)
+                stack.append(need)
+    return seen
+
+
+@pytest.mark.parametrize("path", formulas(), ids=lambda p: p.name)
+def test_every_gate_blocks_the_step_it_approves(path):
+    # Measured in review: both human gates poured, and no step named either in `needs`,
+    # so the scanners and the hardener's patch step became ready with the approval still
+    # open. A gate that nothing depends on blocks nothing.
+    doc = load(path)
+    steps = doc["steps"]
+    named = {n for s in steps for n in (s.get("needs") or [])}
+    unblocking = [s["id"] for s in steps if s.get("gate") and s["id"] not in named]
+    assert not unblocking, f"gate(s) that no step names in `needs`: {unblocking}"
+
+
+# (must run first, must run later). Each pair is an ordering the workflow promises and a
+# readiness bug when it is missing: approval before execution, harnesses before the attack
+# that runs them, every finding producer before tiering and the report.
+REQUIRED_ORDER = [
+    ("tools-approval", "pre-pass"),
+    ("patch-approval", "remediate"),
+    ("author-harnesses", "attack"),
+    ("live-spawn", "tier"),
+    ("attack", "report"),
+    ("triage", "report"),
+    ("author-harnesses", "report"),
+    ("live-spawn", "report"),
+    ("network-stage", "report"),
+]
+
+
+def test_required_orderings_hold_in_every_var_combination():
+    doc = load(FORMULA_DIR / "sabot-campaign.formula.toml")
+    steps = doc["steps"]
+    conditions = {s["id"]: s.get("condition") for s in steps}
+    broken = []
+    for values in combinations():
+        for first, later in REQUIRED_ORDER:
+            if not (step_is_active(conditions.get(first), values)
+                    and step_is_active(conditions.get(later), values)):
+                continue
+            if first not in _active_ancestors(steps, conditions, values, later):
+                broken.append((first, later, dict(values)))
+    assert not broken, f"`later` can start before `first`: {broken[:5]} ({len(broken)} total)"
+
+
+def test_no_execution_step_starts_before_the_tools_approval():
+    # The tools gate authorises scanners, harness runs, and the budget, so every step after
+    # the proposal must wait on it whenever it is poured.
+    doc = load(FORMULA_DIR / "sabot-campaign.formula.toml")
+    steps = doc["steps"]
+    conditions = {s["id"]: s.get("condition") for s in steps}
+    before = {"preconditions", "open-run", "surfaces", "probe-propose", "tools-approval"}
+    early = []
+    for values in combinations():
+        if not step_is_active(conditions.get("tools-approval"), values):
+            continue
+        for step in steps:
+            if step["id"] in before or not step_is_active(conditions.get(step["id"]), values):
+                continue
+            if "tools-approval" not in _active_ancestors(steps, conditions, values, step["id"]):
+                early.append((step["id"], dict(values)))
+    assert not early, f"step(s) ready before the tools approval: {early[:5]} ({len(early)} total)"
 
 
 def _report_json():

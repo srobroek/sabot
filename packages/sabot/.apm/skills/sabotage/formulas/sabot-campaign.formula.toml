@@ -38,6 +38,12 @@
 # `bd gate resolve <gate-bead>`; `bd close` on the gate TASK fails while the gate is open,
 # and it names the gate bead in the error. `bd gate check` never resolves a human gate, so
 # an unattended run parks rather than assuming consent.
+#
+# That chain exists only when the guarded step names the gate in its own `needs`. A gate
+# nothing depends on blocks nothing: the step it was meant to hold pours ready beside it,
+# and the approval becomes a bead the run walks past. Each gated step therefore names its
+# gate AND an unconditional co-anchor, so the autonomous pour that filters the gate out
+# still keeps an edge.
 
 formula = "sabot-campaign"
 description = "Sabot campaign {{run_id}} against {{target}}: attack across five surfaces, prove or refute each finding, report on two axes, and patch only on approval"
@@ -198,7 +204,10 @@ type = "human"
 id = "pre-pass"
 title = "step 4 repo-global pre-pass {{run_id}}"
 type = "task"
-needs = ["probe-propose"]
+# `tools-approval` is the gate this step waits on: every scanner and the baseline suite run
+# here, so without the edge they ran before the user had approved the tool set or budget.
+# `probe-propose` is the co-anchor for the autonomous pour, which filters the gate out.
+needs = ["probe-propose", "tools-approval"]
 labels = ["sab-audit", "non-work"]
 description = """Step 4. Several facts are identical for every surface, so computing
 them per surface runs the same work N times.
@@ -308,7 +317,10 @@ execution_agent_type = "sabot:fuzzer"
 id = "attack"
 title = "step 8 attack {{run_id}}"
 type = "task"
-needs = ["closed-classes"]
+# `author-harnesses` is what the gremlin executes, so attacking before it closes runs an
+# empty or half-written harness set. `closed-classes` anchors the quick pour, which filters
+# `author-harnesses` out.
+needs = ["closed-classes", "author-harnesses"]
 labels = ["sab-audit", "non-work", "agent:gremlin"]
 condition = "{{scope_mode}} != harness-only"
 description = """Step 8. Brief from references/gremlin-brief.md.
@@ -412,7 +424,8 @@ type = "task"
 # parallel with step 0 and a challenger tiers findings that no gremlin has produced.
 # Measured on a real pour: 16 issues, `bd ready` returned step 11 beside step 0, and
 # both `bd cook` and `bd mol pour` reported success.
-needs = ["triage", "closed-classes"]
+# `live-spawn` files findings too, so tiering before it closes leaves its findings untiered.
+needs = ["triage", "closed-classes", "live-spawn"]
 labels = ["sab-audit", "non-work", "agent:challenger"]
 condition = "{{scope_mode}} != quick"
 description = """Step 11. Brief from references/challenger-brief.md.
@@ -510,7 +523,18 @@ type = "task"
 # READY in parallel with step 0 -- a campaign that emits its findings before it has
 # attacked anything. Measured on a real pour: 15 issues, `bd ready` returned step 14
 # beside step 0, and nothing in bd reported a problem.
-needs = ["synthesize", "closed-classes"]
+# Every finding-producing step is named, not only the last one on the full route: a quick
+# pour filters `synthesize` and `tier` out, and with only `closed-classes` left the report
+# started beside the attack it reports on.
+needs = [
+  "synthesize",
+  "closed-classes",
+  "author-harnesses",
+  "attack",
+  "triage",
+  "live-spawn",
+  "network-stage",
+]
 labels = ["sab-audit", "non-work"]
 description = """Step 14. LOAD references/report-template.md.
 
@@ -571,7 +595,10 @@ type = "human"
 id = "remediate"
 title = "step 15 patch {{run_id}}"
 type = "task"
-needs = ["report"]
+# `patch-approval` is the gate this step waits on: without the edge the hardener's patch
+# step became ready the moment the report closed, with the approval still open beside it.
+# Both share one condition, so neither pours without the other.
+needs = ["report", "patch-approval"]
 labels = ["sab-audit", "non-work", "agent:hardener"]
 condition = "{{remediation_route}} != report only"
 description = """Step 15. LOAD references/remediation.md; Brief from
