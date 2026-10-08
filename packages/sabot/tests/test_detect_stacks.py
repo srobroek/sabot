@@ -145,3 +145,48 @@ def test_bake_emits_command_lines(tmp_path):
 def test_not_a_repo_exits_3(tmp_path):
     r = run(tmp_path)  # tmp_path is not git-init'd
     assert r.returncode == 3
+
+
+def test_omp_copilot_and_apm_instructions_are_tooling_not_bake_units(tmp_path):
+    # targeting.md excludes these; the script used to keep its own shorter list.
+    make_repo(tmp_path, {
+        "Cargo.toml": "[package]\nname='x'\n",
+        ".omp/tools/package.json": '{"name":"o"}',
+        ".github/copilot-helpers/package.json": '{"name":"c"}',
+        ".apm/instructions/py/pyproject.toml": "[project]\nname='i'\n",
+    })
+    out = json.loads(run(tmp_path).stdout)
+    assert [m["manifest"] for m in out["manifests"]] == ["Cargo.toml"]
+
+
+def test_python_fetch_fails_loudly_rather_than_or_true(tmp_path):
+    # `uv sync --frozen || pip install -e '.[dev]' || true` always exited 0, so a stack
+    # the image never provisioned read as provisioned.
+    make_repo(tmp_path, {"pyproject.toml": "[project]\nname='x'\ndependencies=['attrs']\n"})
+    (unit,) = json.loads(run(tmp_path).stdout)["bake_units"]
+    assert "|| true" not in unit["fetch"]
+    assert "--only-binary=:all:" in unit["fetch"]
+    assert unit["requirements"] == ["attrs"]
+    assert unit["resolver"] == "pip (pyproject.toml requirements)"
+
+
+def test_uv_lock_pins_registry_packages_only(tmp_path):
+    make_repo(tmp_path, {
+        "pyproject.toml": "[project]\nname='x'\n",
+        "uv.lock": (
+            "[[package]]\nname='x'\nversion='0.1.0'\nsource={editable='.'}\n"
+            "[[package]]\nname='attrs'\nversion='24.2.0'\n"
+            "source={registry='https://pypi.org/simple'}\n"
+        ),
+    })
+    (unit,) = json.loads(run(tmp_path).stdout)["bake_units"]
+    assert unit["requirements"] == ["attrs==24.2.0"]
+    assert unit["resolver"] == "pip (uv.lock pins)"
+
+
+def test_python_manifest_with_nothing_to_install_carries_a_skip_reason(tmp_path):
+    make_repo(tmp_path, {"pyproject.toml": "[tool.poetry]\nname='x'\n", "poetry.lock": ""})
+    (unit,) = json.loads(run(tmp_path).stdout)["bake_units"]
+    assert unit["fetch"] is None
+    assert "poetry" in unit["skip_reason"]
+    assert "# skipped pyproject.toml" in run(tmp_path, "--bake").stdout
