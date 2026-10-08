@@ -459,10 +459,16 @@ printf 'run-contained: EXECUTED rc=%s image=%s status=%s\n' "$RC" "$IMAGE" "$STA
 # misread as a missing system library. It linked at --mem 6g with
 # CARGO_PROFILE_TEST_DEBUG=0; codegen-units=1 and -C link-arg=-Wl,--no-keep-memory were
 # tried and turned out unnecessary. cargo itself reports 101 when its child linker is
-# killed, so this hint fires on the container-level kill and isolation.md carries the
-# ladder for the cargo-level one.
+# killed, so this hint fires on the container-level kill and classify-failure.py reads the
+# cargo-level one.
+#
+# The way out is run-layout.md's degrade-first ladder, not the bigger cap: a build
+# SIGKILLed at 2048 MiB finished at 739 MiB at the SAME cap with `-j 1` and debug info and
+# incremental compilation off. Only a degraded recipe that still dies earns one raise.
+# classify-failure.py walks that ladder (run-preflight.py owns it), so the hint names the
+# step and defers the exact env and the computed size to it rather than restating them.
 if [ "$RC" -eq 137 ]; then
-  echo "run-contained: rc=137 is SIGKILL -- the --memory cap ($MEM), not a target finding. Linking a large cdylib needs several times the compile peak: retry at --mem 6g with CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_DEV_DEBUG=0 before concluding anything about the target." >&2
+  echo "run-contained: rc=137 is SIGKILL -- the --memory cap ($MEM), not a target finding. Degrade the recipe before raising the cap: re-run at the same --mem $MEM with -j 1 and debug info and incremental compilation off; only if that still dies, raise --mem once, recorded as a budget deviation. classify-failure.py --rc 137 --mem-mb <MiB> --attempt <N> gives the step's env and the raise size." >&2
 fi
 
 # Copy findings out of the disposable volume, then the trap removes it. A copy-out
@@ -476,16 +482,22 @@ fi
 # it left behind filled the host volume. So a helper container deletes the build caches
 # from the volume, then reports the remaining payload size; a payload over --max-copy-mb
 # is refused as INVALID rather than copied, because a wrapper blocking for ten minutes on
-# a build tree strands the evidence just as thoroughly as a failed copy.
+# a build tree strands the evidence just as thoroughly as a failed copy. A payload that
+# could not be sized at all is refused the same way: an unknown size is not permission to
+# copy unbounded bytes onto the host disk the cap exists to protect.
 #
 # CACHEDIR.TAG is the mechanical half: cargo and go both write one into their output
 # directories, so an agent-chosen target dir under /artifacts is recognised without this
 # wrapper knowing its name.
-PRUNE='rm -rf /artifacts/.build; for d in /artifacts/*/; do [ -f "$d/CACHEDIR.TAG" ] && { echo "run-contained: pruned build cache from the copy-out: ${d}" >&2; rm -rf "$d"; }; done; du -sm /artifacts 2>/dev/null | cut -f1'
-PAYLOAD_MB="$($DK run --rm --network none --user 1000:1000 -v "$VOL:/artifacts" "$IMAGE" sh -c "$PRUNE" 2>/dev/null | tail -1)"
+PRUNE='rm -rf /artifacts/.build; for d in /artifacts/*/; do [ -f "$d/CACHEDIR.TAG" ] && { echo "run-contained: pruned build cache from the copy-out: ${d}" >&2; rm -rf "${d:?}"; }; done; du -sm /artifacts 2>/dev/null | cut -f1'
+# `|| PAYLOAD_MB=""`: under `set -e` a failed sizing helper would otherwise end the script
+# here with the helper's status, which reads as the contained command's own exit code.
+PAYLOAD_MB="$($DK run --rm --network none --user 1000:1000 -v "$VOL:/artifacts" "$IMAGE" sh -c "$PRUNE" 2>/dev/null | tail -1)" || PAYLOAD_MB=""
 case "$PAYLOAD_MB" in
   ''|*[!0-9]*)
-    echo "run-contained: WARNING could not prune or size the artifacts volume; copying unbounded" >&2 ;;
+    echo "run-contained: REFUSING the copy-out: the artifacts volume could not be pruned or sized, so its payload is unbounded. Copying it anyway risks the host-disk exhaustion --max-copy-mb exists to prevent. Treat this run as INVALID, not clean, and check that $IMAGE runs \`du\` before re-running." >&2
+    status 0 "$RC" "copy-out refused: the artifacts volume could not be sized"
+    exit 4 ;;
   *)
     if [ "$PAYLOAD_MB" -gt "$MAX_COPY_MB" ]; then
       echo "run-contained: REFUSING the copy-out: ${PAYLOAD_MB} MiB of findings exceeds --max-copy-mb $MAX_COPY_MB. Something wrote bulk data to /artifacts that is not a finding; treat this run as INVALID, not clean, and point the writer at /artifacts/.build (pruned, never copied out)." >&2
