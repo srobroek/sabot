@@ -4,14 +4,17 @@
 # writable without --user gymnastics and without running root), the shell/config
 # tooling, the cross-surface scanners that apply to any target (gitleaks, opengrep,
 # ast-grep), and the CI/supply-chain scanners every target's .github/workflows and
-# dependency manifests need (zizmor, actionlint, pinact, trivy, osv-scanner). A
+# dependency manifests need (zizmor, actionlint, trivy, osv-scanner). A
 # language surface adds its toolchain on top via a fragment
 # under layers/ (see Dockerfile.rust); the agent may add a thin extension layer at
 # recon time when a target needs a tool the base lacks (references/isolation.md,
 # "Extending an image").
 #
 # Build: docker build -f Dockerfile.base -t sabot/base:1 .
-FROM debian:stable-slim
+#
+# The base is pinned by digest, not a rolling `stable` tag, so two builds of one tag
+# start from the same floor. Renovate's dockerfile manager bumps the tag and digest.
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
 # Cross-surface floor: shell tools + config scanners that apply to any target.
 #
@@ -31,6 +34,11 @@ RUN apt-get update -q \
 # Binary scanners, pinned and arch-aware. dpkg --print-architecture gives the
 # Debian arch (arm64|amd64); each release names its arm64 asset differently, so
 # map once. Renovate tracks each version via the '# renovate:' comment on the ARG.
+#
+# Every download is verified against layers/base-binaries.sha256 BEFORE it is unpacked
+# or run, keyed by its exact URL. An auditor's image that runs unverified binaries is the
+# supply-chain hole it exists to find. A version bump without new digests fails the
+# build on the missing key, rather than installing whatever the URL now serves.
 # renovate: datasource=github-releases depName=gitleaks/gitleaks
 ARG GITLEAKS_VERSION=8.30.1
 # renovate: datasource=github-releases depName=ast-grep/ast-grep
@@ -40,48 +48,56 @@ ARG OPENGREP_VERSION=1.26.0
 # renovate: datasource=github-releases depName=mvdan/sh
 ARG SHFMT_VERSION=3.13.1
 # CI / supply-chain scanners. zizmor + actionlint are the only tools that do
-# workflow dataflow; osv-scanner + trivy cover dependency and config CVEs; pinact
-# checks that actions are pinned to a SHA. These read .github/workflows and the
+# workflow dataflow; osv-scanner + trivy cover dependency and config CVEs. pinact was
+# dropped: `zizmor --offline` reports an unpinned action itself (surfaces/infra.md).
+# These read .github/workflows and the
 # dependency manifests, which exist on any target regardless of language, so they
 # live in the base rather than a language surface.
 # renovate: datasource=github-releases depName=zizmorcore/zizmor
 ARG ZIZMOR_VERSION=1.28.0
 # renovate: datasource=github-releases depName=rhysd/actionlint
 ARG ACTIONLINT_VERSION=1.7.12
-# renovate: datasource=github-releases depName=suzuki-shunsuke/pinact
-ARG PINACT_VERSION=4.1.1
 # renovate: datasource=github-releases depName=aquasecurity/trivy
 ARG TRIVY_VERSION=0.72.0
 # renovate: datasource=github-releases depName=google/osv-scanner
 ARG OSVSCANNER_VERSION=2.4.0
+COPY layers/base-binaries.sha256 /tmp/base-binaries.sha256
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
       arm64) gl=linux_arm64; ag=aarch64-unknown-linux-gnu; og=aarch64; sf=arm64; \
-             zz=aarch64-unknown-linux-gnu; al=arm64; pn=arm64; tv=ARM64; ov=arm64 ;; \
+             zz=aarch64-unknown-linux-gnu; al=arm64; tv=ARM64; ov=arm64 ;; \
       amd64) gl=linux_x64;   ag=x86_64-unknown-linux-gnu;  og=x86;     sf=amd64; \
-             zz=x86_64-unknown-linux-gnu; al=amd64; pn=amd64; tv=64bit; ov=amd64 ;; \
+             zz=x86_64-unknown-linux-gnu; al=amd64; tv=64bit; ov=amd64 ;; \
       *) echo "sabot base: unsupported arch: $arch" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_${gl}.tar.gz" \
-      | tar -xz -C /usr/local/bin gitleaks; \
-    curl -fsSL -o /tmp/ast-grep.zip "https://github.com/ast-grep/ast-grep/releases/download/${ASTGREP_VERSION}/app-${ag}.zip"; \
-    unzip -o /tmp/ast-grep.zip -d /usr/local/bin; rm /tmp/ast-grep.zip; \
-    curl -fsSL -o /usr/local/bin/opengrep "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_${og}"; \
-    curl -fsSL -o /usr/local/bin/shfmt "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_${sf}"; \
-    curl -fsSL "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-${zz}.tar.gz" \
-      | tar -xz -C /usr/local/bin zizmor; \
-    curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${al}.tar.gz" \
-      | tar -xz -C /usr/local/bin actionlint; \
-    curl -fsSL "https://github.com/suzuki-shunsuke/pinact/releases/download/v${PINACT_VERSION}/pinact_linux_${pn}.tar.gz" \
-      | tar -xz -C /usr/local/bin pinact; \
-    curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${tv}.tar.gz" \
-      | tar -xz -C /usr/local/bin trivy; \
-    curl -fsSL -o /usr/local/bin/osv-scanner "https://github.com/google/osv-scanner/releases/download/v${OSVSCANNER_VERSION}/osv-scanner_linux_${ov}"; \
-    chmod +x /usr/local/bin/gitleaks /usr/local/bin/ast-grep /usr/local/bin/opengrep /usr/local/bin/shfmt \
-             /usr/local/bin/zizmor /usr/local/bin/actionlint /usr/local/bin/pinact /usr/local/bin/trivy /usr/local/bin/osv-scanner; \
+    dl=/tmp/sabot-dl; mkdir -p "$dl"; \
+    fetch() { \
+      want="$(awk -v u="$1" '$2 == u { print $1 }' /tmp/base-binaries.sha256)"; \
+      [ -n "$want" ] || { echo "sabot base: no pinned sha256 for $1" >&2; exit 1; }; \
+      curl -fsSL -o "$dl/$2" "$1"; \
+      echo "$want  $dl/$2" | sha256sum -c --strict -; \
+    }; \
+    gh=https://github.com; \
+    fetch "$gh/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_${gl}.tar.gz" gitleaks.tgz; \
+    fetch "$gh/ast-grep/ast-grep/releases/download/${ASTGREP_VERSION}/app-${ag}.zip" ast-grep.zip; \
+    fetch "$gh/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_${og}" opengrep; \
+    fetch "$gh/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_${sf}" shfmt; \
+    fetch "$gh/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-${zz}.tar.gz" zizmor.tgz; \
+    fetch "$gh/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${al}.tar.gz" actionlint.tgz; \
+    fetch "$gh/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${tv}.tar.gz" trivy.tgz; \
+    fetch "$gh/google/osv-scanner/releases/download/v${OSVSCANNER_VERSION}/osv-scanner_linux_${ov}" osv-scanner; \
+    tar -xzf "$dl/gitleaks.tgz" -C /usr/local/bin gitleaks; \
+    unzip -o "$dl/ast-grep.zip" -d /usr/local/bin; \
+    tar -xzf "$dl/zizmor.tgz" -C /usr/local/bin zizmor; \
+    tar -xzf "$dl/actionlint.tgz" -C /usr/local/bin actionlint; \
+    tar -xzf "$dl/trivy.tgz" -C /usr/local/bin trivy; \
+    install -m 0755 "$dl/opengrep" "$dl/shfmt" "$dl/osv-scanner" /usr/local/bin/; \
+    rm -rf "${dl:?}" /tmp/base-binaries.sha256; \
+    chmod +x /usr/local/bin/gitleaks /usr/local/bin/ast-grep /usr/local/bin/zizmor \
+             /usr/local/bin/actionlint /usr/local/bin/trivy; \
     gitleaks version; ast-grep --version; opengrep --version; shfmt --version; \
-    zizmor --version; actionlint --version; pinact --version; trivy --version; osv-scanner --version
+    zizmor --version; actionlint --version; trivy --version; osv-scanner --version
 
 # Mutators, the reducer, and the remaining config/secret scanners. Split into its own
 # layer so a rebuild of the floor above does not re-download this set; the reason each
@@ -118,6 +134,12 @@ USER breaker
 # the sabot language ecosystems (crates.io, npm, PyPI, Go) via a throwaway lockfile per
 # ecosystem. Both DBs are rolling snapshots, not semver-tagged, so the image tag bump is
 # the version boundary and a rebuild re-pulls the current DB.
+#
+# The osv seed is NOT masked. osv-scanner exits 1 when it finds a vulnerability, which
+# the seed's known-vulnerable lodash and requests pins guarantee, and anything above 1
+# is a failed download or parse. The second run is the proof: offline, with no
+# download, it must still report both seeded packages, or the DB never loaded and every
+# offline scan would read as clean.
 RUN trivy --cache-dir /opt/sabot-db/trivy image --download-db-only
 RUN set -eux; \
     seed="$(mktemp -d)"; \
@@ -126,9 +148,17 @@ RUN set -eux; \
     printf 'requests==2.20.0\n' > "$seed/requirements.txt"; \
     printf 'module x\ngo 1.20\nrequire github.com/x/y v1.0.0\n' > "$seed/go.mod"; \
     : > "$seed/go.sum"; \
-    XDG_CACHE_HOME=/opt/sabot-db/osv \
-      osv-scanner scan source --download-offline-databases --offline-vulnerabilities -r "$seed" || true; \
-    rm -rf "${seed:?}"
+    rc=0; XDG_CACHE_HOME=/opt/sabot-db/osv \
+      osv-scanner scan source --download-offline-databases --offline-vulnerabilities -r "$seed" \
+      > /dev/null || rc=$?; \
+    [ "$rc" -le 1 ] || { echo "sabot base: osv DB download failed rc=$rc" >&2; exit 1; }; \
+    rc=0; XDG_CACHE_HOME=/opt/sabot-db/osv \
+      osv-scanner scan source --offline-vulnerabilities --format json -r "$seed" \
+      > /tmp/osv-probe.json || rc=$?; \
+    if [ "$rc" -ne 1 ] || ! grep -q '"lodash"' /tmp/osv-probe.json \
+       || ! grep -q '"requests"' /tmp/osv-probe.json; then \
+      echo "sabot base: the offline osv DB does not load (rc=$rc)" >&2; exit 1; fi; \
+    rm -rf "${seed:?}" /tmp/osv-probe.json
 
 WORKDIR /scratch
 VOLUME /artifacts
