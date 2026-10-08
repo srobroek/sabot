@@ -29,13 +29,27 @@ EXIT_OUTSTANDING = 5
 MB = 1024 * 1024
 
 
-def make_run(tmp_path: Path, run_id: str = "run-20260820a") -> tuple[Path, Path]:
+LAYOUT = SKILL / "scripts" / "run-layout.py"
+
+
+def scratch_of(root: Path, home: Path) -> Path:
+    """The run's host scratch, read from run-layout.py rather than re-derived here."""
+    p = subprocess.run(
+        [sys.executable, str(LAYOUT), "paths", "--run-root", str(root), "--json"],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)), check=True,
+    )
+    rows = json.loads(p.stdout)["paths"]
+    return Path(next(r["path"] for r in rows if r["var"] == "SABOT_HOST_SCRATCH"))
+
+
+def make_run(tmp_path: Path, run_id: str = "run-20260820a",
+             repo: str = "target") -> tuple[Path, Path]:
     """A minimal but recognizable run root, plus the fake HOME its scratch lives under."""
     home = tmp_path / "home"
-    root = tmp_path / "target" / ".sabot" / run_id
+    root = tmp_path / repo / ".sabot" / run_id
     (root / "artifacts").mkdir(parents=True)
     (root / "ephemeral").mkdir()
-    (home / ".sabot-scratch" / run_id).mkdir(parents=True)
+    scratch_of(root, home).mkdir(parents=True)
     return root, home
 
 
@@ -92,7 +106,7 @@ def test_the_ephemeral_parent_dirs_survive_so_a_live_campaign_keeps_its_destinat
     fill(root / "ephemeral" / "code-metadata" / "build")
     run(root, home, "--apply")
     assert (root / "ephemeral").is_dir()
-    assert (home / ".sabot-scratch" / root.name).is_dir()
+    assert scratch_of(root, home).is_dir()
 
 
 def test_durable_evidence_is_never_touched(tmp_path):
@@ -232,10 +246,22 @@ def test_the_ceiling_check_passes_under_the_limit(tmp_path):
 
 def test_host_scratch_is_torn_down_with_the_run(tmp_path):
     root, home = make_run(tmp_path)
-    scratch = fill(home / ".sabot-scratch" / root.name / "stage")
+    scratch = fill(scratch_of(root, home) / "stage")
     p, _ = run(root, home, "--apply")
     assert p.returncode == 0
     assert not scratch.exists()
+
+
+def test_teardown_never_deletes_another_repos_run_with_the_same_id(tmp_path):
+    # host_scratch keyed only on the run-root basename, so project-a's run-1 and
+    # project-b's run-1 shared ~/.sabot-scratch/run-1 and one teardown deleted both.
+    root_a, home = make_run(tmp_path / "a", run_id="run-1", repo="project-a")
+    root_b, _ = make_run(tmp_path / "a", run_id="run-1", repo="project-b")
+    assert scratch_of(root_a, home) != scratch_of(root_b, home)
+    live = fill(scratch_of(root_b, home) / "stage")
+    p, _ = run(root_a, home, "--apply")
+    assert p.returncode == 0
+    assert (live / "blob.bin").exists(), "teardown of project-a deleted project-b's scratch"
 
 
 # --- shape -----------------------------------------------------------------

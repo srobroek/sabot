@@ -17,7 +17,7 @@ path by hand.
 | `<run-root>/ephemeral/<node-slug>/cache/` | ephemeral | tool caches | one node |
 | `<run-root>/ephemeral/<node-slug>/corpora/` | ephemeral | regenerable from `references/corpora/` | one node |
 | `<run-root>/ephemeral/<node-slug>/src/` | ephemeral | copied source tree | one node |
-| `~/.sabot-scratch/<run-id>/` | ephemeral | host-side scratch outside the repo | orchestrator |
+| `~/.sabot-scratch/<repo>-<run-id>-<hash>/` | ephemeral | host-side scratch outside the repo, keyed by repo and run id so two repos' `run-1` never share one | orchestrator |
 
 Durability is readable from the path. Exactly one segment decides it: anything under
 `ephemeral/` is regenerable, everything else under the run root is evidence.
