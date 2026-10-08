@@ -372,6 +372,24 @@ def test_contained_builds_use_the_package_context(tmp_path):
         "cargo check --quiet --offline --manifest-path /target/Cargo.toml")
 
 
+def test_a_contained_build_keeps_a_hostile_path_one_argument(tmp_path):
+    # The command runs under `sh -c`. An unquoted `bad; true; #` directory split it into
+    # a failing cargo check, then `true`, so the shell exited 0 and the check read PASS.
+    import shlex
+    mod = _module()
+    crate = tmp_path / "bad; true; #"
+    (crate / "fuzz_targets").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text("[package]\nname='x'\n")
+    (crate / "go.mod").write_text("module x\n")
+    (crate / "tsconfig.json").write_text("{}")
+    cmd = mod.contained_build(crate / "fuzz_targets" / "p.rs", tmp_path)[0]
+    assert shlex.split(cmd)[-1] == "/target/bad; true; #/Cargo.toml"
+    cmd = mod.contained_build(crate / "fuzz_targets" / "h.go", tmp_path)[0]
+    assert shlex.split(cmd)[:2] == ["cd", "/target/bad; true; #"]
+    cmd = mod.contained_build(crate / "fuzz_targets" / "h.ts", tmp_path)[0]
+    assert shlex.split(cmd)[-1] == "/target/bad; true; #"
+
+
 def test_an_explicitly_empty_seed_is_accepted(tmp_path):
     # An empty input is a legitimate parser test and a legitimate minimal reproducer.
     seed = tmp_path / "empty.input"

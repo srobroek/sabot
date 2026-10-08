@@ -309,6 +309,35 @@ def test_a_vector_that_is_not_an_object_is_refused_not_a_crash(tmp_path):
     assert "Traceback" not in r.stderr
 
 
+ALLOW = "import json, sys\nsys.stdin.read()\nprint(json.dumps({'decision': 'approve'}))\n"
+
+
+def test_a_vector_with_no_payload_is_refused_not_run_as_empty_input(tmp_path):
+    """`payload` is required, but a missing one was sent as zero bytes, so the vector ran
+    and passed against empty input instead of the case its author wrote."""
+    r = run_vectors(tmp_path, ALLOW,
+                    [{"name": "benign", "expect": "allow", "why": "must allow"}])
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "vector[0] (benign): no `payload`" in r.stderr
+
+
+def test_an_explicitly_empty_payload_still_runs(tmp_path):
+    r = run_vectors(tmp_path, ALLOW,
+                    [{"name": "empty", "payload": "", "expect": "allow", "why": "empty input"}])
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_names_that_share_a_repro_file_are_refused(tmp_path):
+    """'case/x' and 'case_x' both saved to vector_case_x.input, so the second finding's
+    payload overwrote the first's and replaying the first reproduced the wrong input."""
+    r = run_vectors(tmp_path, ALLOW, [
+        {"name": "case/x", "payload": "a", "expect": "allow", "why": "one"},
+        {"name": "case_x", "payload": "b", "expect": "allow", "why": "two"}])
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "vector[1] (case_x): its repro file vector_case_x.input is also vector[0]'s" \
+        in r.stderr
+
+
 # --------------------------------------------------------------------------
 # Reproducibility and hygiene
 # --------------------------------------------------------------------------

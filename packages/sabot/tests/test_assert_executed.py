@@ -235,6 +235,23 @@ def test_a_skipped_go_test_is_not_work(tmp_path):
     assert p.returncode == EXIT_NO_WORK, p.stderr
 
 
+def test_a_non_verbose_go_test_package_summary_is_work(tmp_path):
+    # Plain `go test ./...` prints only `ok <pkg> <time>s` per passing package; a passing
+    # run in the default format was recorded as NOT EXECUTED.
+    p = parse(tmp_path, "ok  \texample.com/a\t0.005s\nok  \texample.com/b\t0.012s\n")
+    assert p.returncode == 0, p.stderr
+    assert "units=2 " in p.stderr
+    # -v adds the same summary after its result lines; each test still counts once.
+    p = parse(tmp_path, "=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\nok  \tx/a\t0.005s\n")
+    assert "units=1 " in p.stderr
+
+
+@pytest.mark.parametrize("line", ["ok  \texample.com/a\t0.002s [no tests to run]\n",
+                                  "ok  \texample.com/a\t(cached)\n"])
+def test_a_go_package_that_ran_no_test_is_not_work(tmp_path, line):
+    assert parse(tmp_path, line).returncode == EXIT_NO_WORK
+
+
 def test_a_rust_target_counts_its_summary_not_its_banner_and_lines(tmp_path):
     # 3 started, 1 ignored: the summary says 2 ran, and the per-test lines are not added.
     text = ("running 3 tests\ntest a::one ... ok\ntest a::two ... ok\ntest a::three ... ignored\n"
