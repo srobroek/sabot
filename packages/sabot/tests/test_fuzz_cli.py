@@ -239,6 +239,76 @@ sys.stdin.read()
     assert "BYPASS" in r.stdout
 
 
+def run_vectors(tmp_path: Path, guard_body: str, vectors: list) -> subprocess.CompletedProcess:
+    t = write_exec(tmp_path / "guard.py", "#!/usr/bin/env python3\n" + guard_body)
+    vec = tmp_path / "v.json"
+    vec.write_text(json.dumps(vectors))
+    return run_harness("--target", str(t), "--mode", "json", "--vectors", str(vec),
+                       "--skip-structural", "--artifacts-dir", str(tmp_path / "a"))
+
+
+DENY_RM = [{"name": "catastrophic", "payload": {"tool_input": {"command": "rm -rf /"}},
+            "expect": "deny", "why": "must deny"}]
+
+
+def test_a_deny_by_exit_2_with_the_reason_on_stderr_is_a_deny(tmp_path):
+    """Claude Code's documented deny: exit 2, reason on stderr, nothing on stdout.
+    Reading stdout alone scored it as an allow, a false BYPASS on every deny vector."""
+    r = run_vectors(tmp_path, (
+        "import sys\nsys.stdin.read()\n"
+        "print('Blocked: rm -rf is not allowed', file=sys.stderr)\nsys.exit(2)\n"
+    ), DENY_RM)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "BYPASS" not in r.stdout
+
+
+def test_exit_2_blocks_even_when_stdout_says_allow(tmp_path):
+    r = run_vectors(tmp_path, (
+        "import json, sys\nsys.stdin.read()\n"
+        "print(json.dumps({'hookSpecificOutput': {'permissionDecision': 'allow'}}))\n"
+        "sys.exit(2)\n"
+    ), DENY_RM)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_an_exit_2_on_a_benign_vector_is_over_blocking(tmp_path):
+    r = run_vectors(tmp_path, "import sys\nsys.stdin.read()\nsys.exit(2)\n", [
+        {"name": "benign", "payload": {"tool_input": {"command": "ls"}},
+         "expect": "allow", "why": "must not over-block"}])
+    assert r.returncode == 1
+    assert "CONTRACT" in r.stdout
+    assert "exit 2" in r.stdout
+
+
+def test_the_legacy_block_decision_is_a_deny_not_a_contract_breach(tmp_path):
+    """`{"decision": "block"}` is the deprecated Claude Code form and the Codex form."""
+    r = run_vectors(tmp_path, (
+        "import json, sys\nsys.stdin.read()\nprint(json.dumps({'decision': 'block'}))\n"
+    ), DENY_RM)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "CONTRACT" not in r.stdout
+
+
+def test_a_guard_that_errors_without_a_decision_fails_open(tmp_path):
+    """Any other nonzero exit with no decision is a non-blocking error: the call runs."""
+    r = run_vectors(tmp_path, "import sys\nsys.stdin.read()\nsys.exit(1)\n", DENY_RM)
+    assert r.returncode == 1
+    assert "BYPASS" in r.stdout
+    assert "non-blocking error" in r.stdout
+
+
+def test_a_vector_that_is_not_an_object_is_refused_not_a_crash(tmp_path):
+    """A string element crashed validation on `vec.get`, so the harness died with a
+    traceback that read as a defect instead of naming the unusable vector."""
+    t = write_exec(tmp_path / "guard.py", "#!/usr/bin/env python3\nimport sys\nsys.stdin.read()\n")
+    vec = tmp_path / "v.json"
+    vec.write_text(json.dumps(["bad-vector", *DENY_RM]))
+    r = run_harness("--target", str(t), "--vectors", str(vec), "--skip-structural")
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "vector[0]: not an object (got str)" in r.stderr
+    assert "Traceback" not in r.stderr
+
+
 # --------------------------------------------------------------------------
 # Reproducibility and hygiene
 # --------------------------------------------------------------------------

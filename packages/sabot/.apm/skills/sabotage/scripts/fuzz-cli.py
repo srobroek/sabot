@@ -27,15 +27,17 @@ USAGE
   fuzz-cli.py --target ./bin/parse --mode text --timeout 5 --max-bytes 4000000
   fuzz-cli.py --target ./scripts/guard.py --vectors vectors.json --artifacts-dir /tmp/a
 
-VECTORS FILE (JSON list; written by the `fuzzer` agent)
+VECTORS FILE (JSON list; written by the `sabot-fuzzer` agent)
   [{"name": "env-wrapper bypass",
     "payload": {"tool_name": "Bash", "tool_input": {"command": "env rm -rf /"}},
     "expect": "deny",
     "why": "wrapper prefix must not move the command out of guard position"}]
 
 `expect` is one of: deny · allow · ask · no-crash · nonzero-exit · zero-exit.
-For --mode json, deny/allow/ask are matched against the hook decision fields
-(permissionDecision, hookSpecificOutput.permissionDecision, or decision).
+For --mode json, deny/allow/ask follow the hook contract (Claude Code, Codex): exit 2 is
+deny whatever stdout says; otherwise the decision fields of a JSON object on stdout
+decide (hookSpecificOutput.permissionDecision, permissionDecision, or decision, with the
+legacy `block`/`approve` read as deny/allow), and no decision is allow.
 
 EXIT
   0  no findings
@@ -246,25 +248,32 @@ def persist(r: "Runner", case: str, payload: bytes, delivery: str) -> str:
 # Verdict extraction (hook contract)
 # --------------------------------------------------------------------------
 
-_DECISION_KEYS = ("permissionDecision", "decision", "hookEventName")
+# Legacy decision values, read as their current equivalents. Claude Code's deprecated
+# top-level `decision: "block"` and Codex's `decision: "block"` both stop the call, so
+# scoring `block` against an expected `deny` reported a spurious CONTRACT finding.
+_DECISION_ALIASES = {"block": "deny", "approve": "allow"}
+
+# The hook contract's blocking exit status. A guard that denies by exiting 2 with its
+# reason on stderr (the documented Claude Code form) prints nothing on stdout, so reading
+# stdout alone scored every such deny as an allow: a false BYPASS on every deny vector.
+HOOK_BLOCK_RC = 2
 
 
 def extract_decision(obj) -> str | None:
-    """Pull a hook decision out of a parsed response. Returns the lowercased
-    decision, or None when the response carries no decision at all (which the
-    hook contract treats as 'no opinion' -> allow)."""
+    """Pull a hook decision out of a parsed response. Returns the lowercased decision
+    with legacy aliases mapped, or None when the response carries no decision at all
+    (which the hook contract treats as 'no opinion' -> allow)."""
     if not isinstance(obj, dict):
         return None
     hso = obj.get("hookSpecificOutput")
+    candidates = []
     if isinstance(hso, dict):
-        for k in ("permissionDecision", "decision"):
-            v = hso.get(k)
-            if isinstance(v, str):
-                return v.strip().lower()
-    for k in _DECISION_KEYS:
-        v = obj.get(k)
-        if isinstance(v, str) and k != "hookEventName":
-            return v.strip().lower()
+        candidates += [hso.get("permissionDecision"), hso.get("decision")]
+    candidates += [obj.get("permissionDecision"), obj.get("decision")]
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            decision = value.strip().lower()
+            return _DECISION_ALIASES.get(decision, decision)
     return None
 
 
@@ -351,10 +360,12 @@ def validate_vectors(vectors: list[dict]) -> list[str]:
     """
     problems: list[str] = []
     for i, vec in enumerate(vectors):
-        where = f"vector[{i}]" + (f" ({vec.get('name')})" if vec.get("name") else "")
+        # Shape first: a string element used to crash this loop on `vec.get`, so the
+        # harness died with a traceback instead of naming the unusable vector.
         if not isinstance(vec, dict):
-            problems.append(f"{where}: not an object")
+            problems.append(f"vector[{i}]: not an object (got {type(vec).__name__})")
             continue
+        where = f"vector[{i}]" + (f" ({vec.get('name')})" if vec.get("name") else "")
         expect = vec.get("expect")
         if expect is None:
             problems.append(
@@ -443,26 +454,36 @@ def check_vectors(r: Runner, findings: list[Finding], vectors: list[dict], mode:
                 findings.append(Finding("CONTRACT", case, f"expected exit 0, got {rc}. {why}", ref))
             continue
 
-        # Decision expectations (deny / allow / ask).
+        # Decision expectations (deny / allow / ask), read the way the hook contract reads
+        # them: the exit code first, then stdout.
         body = out.strip()
         parsed = None
         if body:
             try:
                 parsed = json.loads(body)
             except json.JSONDecodeError:
-                ref = persist(r, case, repro, delivery)
-                findings.append(Finding("UNPARSABLE", case,
-                                        "expected a decision but stdout is not JSON", ref))
-                continue
-        got = extract_decision(parsed) if parsed is not None else None
-        # No decision emitted means the guard did not object, i.e. allow.
-        effective = got or "allow"
+                if rc == 0:
+                    ref = persist(r, case, repro, delivery)
+                    findings.append(Finding("UNPARSABLE", case,
+                                            "expected a decision but stdout is not JSON", ref))
+                    continue
+        if rc == HOOK_BLOCK_RC:
+            effective, basis = "deny", f"exit {HOOK_BLOCK_RC} blocks whatever stdout says"
+        elif (got := extract_decision(parsed)) is not None:
+            effective, basis = got, f"stdout decision, exit {rc}"
+        elif rc == 0:
+            # No decision emitted means the guard did not object, i.e. allow.
+            effective, basis = "allow", "exit 0 with no decision"
+        else:
+            # Any other status without a decision is a non-blocking error: the hook
+            # failed and the call proceeds, which is an allow and a fail-open guard.
+            effective, basis = "allow", f"exit {rc} with no decision is a non-blocking error"
         if effective != expect:
             kind = "BYPASS" if expect == "deny" and effective in ("allow", "ask") else "CONTRACT"
             ref = persist(r, case, repro, delivery)
             findings.append(
                 Finding(kind, case,
-                        f"expected {expect}, got {effective}. {why}".strip(), ref))
+                        f"expected {expect}, got {effective} ({basis}). {why}".strip(), ref))
         if effective == "ask":
             findings.append(
                 Finding("STALL", case,
@@ -476,7 +497,7 @@ def check_vectors(r: Runner, findings: list[Finding], vectors: list[dict], mode:
 
 
 VECTORS_SCHEMA = """\
---vectors FILE : a JSON list of attack vectors, one object each. The `fuzzer`
+--vectors FILE : a JSON list of attack vectors, one object each. The `sabot-fuzzer`
 agent writes this; `gremlin` runs it.
 
 [
@@ -497,9 +518,12 @@ expect verdicts:
   nonzero-exit the target must exit non-zero
   zero-exit    the target must exit 0
 
-For --mode json, deny/allow/ask are read from the hook decision fields:
-  hookSpecificOutput.permissionDecision, or top-level permissionDecision/decision.
-No decision emitted == allow (silence is not a block).
+For --mode json, deny/allow/ask follow the hook contract (Claude Code, Codex):
+  exit 2                 deny, whatever stdout says (the reason goes to stderr)
+  a JSON object          its hookSpecificOutput.permissionDecision, or top-level
+                         permissionDecision/decision; legacy block/approve = deny/allow
+  no decision            allow (silence is not a block), including a nonzero exit,
+                         which the contract treats as a non-blocking error
 
 payload delivery by --mode:
   json  payload sent on stdin as JSON (the default hook contract)
