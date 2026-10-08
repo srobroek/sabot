@@ -2,6 +2,7 @@
 """Validate a generated artifact before anything depends on it.
 
     validate-generated.py --kind {rules,json,corpus,harness} PATH [--json] [--normalize]
+                          [--image IMG --target DIR] [--allow-empty]
 
 Sabot generates rule files, harnesses, seed corpora, vectors, scenario JSON, and its own
 report. Four measured failures say why generation is not evidence of a usable artifact:
@@ -20,6 +21,20 @@ report. Four measured failures say why generation is not evidence of a usable ar
 
 CHECKS, each reported independently so a caller sees which one failed: `exists`,
 `non_empty`, `encoding`, `shape`, `not_commented_out`, `tool_load`, `compiles`.
+
+A BUILD IS TARGET-TOUCHING. `cargo check` runs every build.rs and proc macro, so the
+`.rs`, `.go`, and `.ts` compile checks run ONLY inside the surface image through
+run-contained.sh (`--image`, with `--target` naming the repo root to mount read-only).
+Without `--image` they report UNVALIDATED and nothing is built on the host. They also
+run in the harness's own package context -- the crate, the Go package directory, the
+nearest tsconfig.json -- because a single-file `go vet x.go` or `tsc x.ts` rejects a valid
+harness that imports its siblings. The `.py`, `.js`, and `.sh` checks parse without
+executing anything and stay on the host.
+
+A corpus seed may be explicitly empty: an empty input is a legitimate parser test and a
+legitimate minimal reproducer. `--allow-empty` accepts a zero-byte `corpus`/`input` file
+and records that it was accepted as empty; every other kind, and a seed without the flag,
+still fails `non_empty`.
 
 The `shape` check on a rules file is a SHAPE CHECK, NOT A YAML PARSER. It looks for a
 top-level `rules:` sequence, at least one `- id:` item, and no tab indentation. The real
@@ -43,6 +58,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 EXIT_FAIL = 1
@@ -66,17 +82,18 @@ NORMALIZE = {
 
 _RULE_COUNT = re.compile(r"(\d+)\s+(?:valid\s+)?rules?\b", re.I)
 
-COMPILERS = {
+# Static checks: parse only, run no target code, so they are safe on the host.
+HOST_CHECKS = {
     ".py": lambda p: [sys.executable, "-m", "py_compile", str(p)],
     ".js": lambda p: ["node", "--check", str(p)],
     ".mjs": lambda p: ["node", "--check", str(p)],
     ".cjs": lambda p: ["node", "--check", str(p)],
-    ".ts": lambda p: ["tsc", "--noEmit", str(p)],
-    ".tsx": lambda p: ["tsc", "--noEmit", str(p)],
-    ".go": lambda p: ["go", "vet", str(p)],
-    ".rs": lambda p: ["cargo", "check", "--quiet"],
     ".sh": lambda p: ["shellcheck", str(p)],
 }
+# Builds: compile the harness's package, which executes build scripts and proc macros, so
+# they run only in the container.
+CONTAINED_BUILDS = (".rs", ".go", ".ts", ".tsx")
+RUN_CONTAINED = Path(__file__).resolve().parent / "run-contained.sh"
 
 
 class Report:
@@ -131,13 +148,17 @@ def check_exists(rep: Report) -> str:
     return rep.add("exists", PASS, str(rep.path))
 
 
-def check_non_empty(rep: Report) -> str:
+def check_non_empty(rep: Report, allow_empty: bool = False) -> str:
     size = rep.path.stat().st_size
+    if size == 0 and allow_empty and rep.kind == "corpus":
+        return rep.add("non_empty", PASS,
+                       "0 bytes, accepted as an explicitly empty seed (--allow-empty)")
     if size == 0:
         return rep.add(
             "non_empty", FAIL,
-            "0 bytes. A zero-byte artifact is a failure, never an empty result: a repro "
-            "file with no content cannot reproduce or be minimized.",
+            "0 bytes. A zero-byte artifact is a failure unless it is a seed declared empty "
+            "with --allow-empty: a generated file with no content usually means the writer "
+            "dropped its payload.",
         )
     return rep.add("non_empty", PASS, f"{size} bytes")
 
@@ -261,24 +282,55 @@ def check_tool_load(rep: Report) -> str:
     return rep.add("tool_load", PASS, f"{tool} loaded {loaded} rule(s)")
 
 
-def check_compiles(rep: Report) -> str:
+def _nearest(path: Path, marker: str, stop: Path) -> Path | None:
+    for parent in path.parents:
+        if (parent / marker).is_file():
+            return parent
+        if parent == stop:
+            break
+    return None
+
+
+def contained_build(path: Path, root: Path) -> tuple[str | None, str]:
+    """(in-container shell command, or None and why) for a build-checked harness.
+
+    Paths are rewritten under /target, where run-contained.sh mounts `root` read-only.
+    """
+    def inside(p: Path) -> str:
+        rel = p.relative_to(root).as_posix()
+        return "/target" if rel == "." else f"/target/{rel}"
+
+    if path.suffix == ".rs":
+        crate = _nearest(path, "Cargo.toml", root)
+        if crate is None:
+            return None, (f"{path} has no Cargo.toml in any parent, so no fuzz target could "
+                          "ever build it")
+        return f"cargo check --quiet --offline --manifest-path {inside(crate)}/Cargo.toml", ""
+    if path.suffix == ".go":
+        module = _nearest(path, "go.mod", root)
+        if module is None:
+            return None, f"{path} has no go.mod in any parent, so it is in no package"
+        pkg = path.parent.relative_to(module).as_posix()
+        return f"cd {inside(module)} && go vet ./{'' if pkg == '.' else pkg}", ""
+    tsconfig = _nearest(path, "tsconfig.json", root)
+    if tsconfig is not None:
+        return f"tsc --noEmit -p {inside(tsconfig)}", ""
+    return f"tsc --noEmit {inside(path)}", ""
+
+
+def check_compiles(rep: Report, image: str | None = None, target: Path | None = None) -> str:
     suffix = rep.path.suffix
-    builder = COMPILERS.get(suffix)
+    if suffix in CONTAINED_BUILDS:
+        return _check_contained_build(rep, image, target)
+    builder = HOST_CHECKS.get(suffix)
     if builder is None:
         return rep.add("compiles", UNVALIDATED,
                        f"no compile check known for '{suffix or rep.path.name}'")
     cmd = builder(rep.path)
-    cwd = None
-    if suffix == ".rs":
-        cwd = next((p for p in rep.path.parents if (p / "Cargo.toml").is_file()), None)
-        if cwd is None:
-            return rep.add("compiles", FAIL,
-                           f"{rep.path} has no Cargo.toml in any parent, so no fuzz target "
-                           "could ever build it")
     if shutil.which(cmd[0]) is None and cmd[0] != sys.executable:
         return rep.add("compiles", UNVALIDATED,
                        f"{cmd[0]} is not on PATH; buildability UNVALIDATED, not a pass")
-    rc, out = _run(cmd, cwd=cwd)
+    rc, out = _run(cmd)
     if rc != 0:
         return rep.add(
             "compiles", FAIL,
@@ -288,11 +340,41 @@ def check_compiles(rep: Report) -> str:
     return rep.add("compiles", PASS, f"`{cmd[0]}` accepted it")
 
 
-def validate(path: Path, kind: str, normalize: bool) -> Report:
+def _check_contained_build(rep: Report, image: str | None, target: Path | None) -> str:
+    path = rep.path.resolve()
+    # Without --target the package lookup still runs, so a harness in no crate or module
+    # fails here rather than hiding behind UNVALIDATED.
+    root = target.resolve() if target is not None else Path(path.anchor)
+    if root not in path.parents:
+        return rep.add("compiles", FAIL, f"{path} is not under --target {root}")
+    cmd, why = contained_build(path, root)
+    if cmd is None:
+        return rep.add("compiles", FAIL, why)
+    if not image or target is None:
+        return rep.add(
+            "compiles", UNVALIDATED,
+            f"`{cmd}` builds the package, which runs its build scripts and proc macros, so "
+            "it runs only in the surface image: pass --image <img> --target <repo>. Nothing "
+            "was built on the host; buildability UNVALIDATED, not a pass.",
+        )
+    with tempfile.TemporaryDirectory(prefix="sabot-validate-") as artifacts:
+        rc, out = _run([str(RUN_CONTAINED), "--target", str(root), "--artifacts", artifacts,
+                        "--image", image, "--workdir", "/target", "--", "sh", "-c", cmd])
+    if rc != 0:
+        return rep.add(
+            "compiles", FAIL,
+            f"`{cmd}` in {image} exited {rc}: {out.strip()[:400]}. A harness that does not "
+            "build is a coverage gap reported as coverage.",
+        )
+    return rep.add("compiles", PASS, f"`{cmd}` accepted it inside {image}")
+
+
+def validate(path: Path, kind: str, normalize: bool, image: str | None = None,
+             target: Path | None = None, allow_empty: bool = False) -> Report:
     rep = Report(path, kind)
     if check_exists(rep) == FAIL:
         return rep
-    if check_non_empty(rep) == FAIL:
+    if check_non_empty(rep, allow_empty) == FAIL:
         return rep
 
     if kind == "rules":
@@ -306,7 +388,7 @@ def validate(path: Path, kind: str, normalize: bool) -> Report:
         check_json(rep)
     elif kind == "harness":
         check_encoding(rep, normalize)
-        check_compiles(rep)
+        check_compiles(rep, image, target)
     # corpus: existence and non-emptiness are the whole contract -- a seed input is
     # arbitrary bytes by design, so any shape check here would reject valid corpora.
     return rep
@@ -320,10 +402,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--normalize", action="store_true",
                     help="rewrite typographic characters to ASCII in place")
     ap.add_argument("--json", action="store_true", dest="as_json")
+    ap.add_argument("--image", help="surface image a .rs/.go/.ts build check runs in")
+    ap.add_argument("--target", type=Path,
+                    help="repo root run-contained.sh mounts read-only for the build check")
+    ap.add_argument("--allow-empty", action="store_true",
+                    help="accept a zero-byte corpus/input seed as deliberately empty")
     args = ap.parse_args(argv)
 
     kind = "corpus" if args.kind == "input" else args.kind
-    rep = validate(Path(args.path).expanduser(), kind, args.normalize)
+    rep = validate(Path(args.path).expanduser(), kind, args.normalize, args.image,
+                   args.target.expanduser() if args.target else None, args.allow_empty)
 
     if args.as_json:
         print(json.dumps(rep.as_dict(), indent=2, sort_keys=True))
