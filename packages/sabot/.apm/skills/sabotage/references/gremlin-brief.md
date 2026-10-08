@@ -72,6 +72,7 @@ NOT Never retry a network failure, and never ask for network to complete a scan.
 MUST Never append `|| true` to a scanner invocation, and never route its exit code to `/dev/null`. The suppression turns a crash into a clean scan, and the empty output file it leaves behind is indistinguishable from a scan that found nothing. Measured: `ruff check --output-format=json . 2>/dev/null || true` against a read-only mount wrote a 0-byte file at rc=0; ruff had exited 2, unable to create its cache on the read-only filesystem, and the same scan with `--no-cache` returned rc=1 and 124 findings. A read-only target mount is the normal configuration, so this failure is expected rather than exotic.
 MUST Wrap every scanner that writes an output file in `$SABOT_SKILL_DIR/scripts/assert-scan.py --output <file> --tool <name> -- <command>`, and read its verdict rather than the tool's exit code. It deletes a stale output first, then checks the file exists, is non-empty, parses, and reports a nonzero file count. Exit 11 is NOT EXECUTED and exit 7 is a tool failure for `classify-failure.py`; neither is a clean scan.
 MUST Report any file in its `partial_parse_files` as unmeasured, naming the file. A partial parse still counts in `paths.scanned`, so the file looks covered while no rule ever reached the unparsed region: opengrep exited 0 over this package having left 3 lines of `run-contained.sh` unanalysed by all 301 rules. A file count cannot detect this and a findings count of zero cannot either.
+MUST Record a scan that `assert-scan.py` passed with `coverage_reported: false` as run with its coverage UNREPORTED, never as a count of files covered. A clean shellcheck or ast-grep `[]`, or a trivy report with no `Results`, names no file at all, so the scan ran and its reach is unknown.
 MUST Run `$SABOT_SKILL_DIR/scripts/validate-generated.py` over every generated rule file before scanning with it, and treat a rule that fails to compile or load as NOT EXECUTED for the loci it was written for.
 
 ## A resource failure is INVALID, in both directions
@@ -104,13 +105,13 @@ docs. A rule the project disabled with a stated reason caps at HARDENING.>
 
 ## Harnesses to execute
 <list the harness wisps for this surface. Discover them yourself with:
-  bd list --parent <surface-bead> --label sab-harness --status open --json
+  bd list --parent <surface-bead> --label sab-harness --status open --limit 0 --json
 Note `--label`, singular: the plural form returns nothing silently. Claim each with
 `bd update <wisp> --claim` before running it. An empty result is a broken query until
 you have re-run it without the label and compared the counts, per
 `references/beads-store.md`.>
 
-MUST Release every wisp you claimed back to `open` with its state stamped, as `bd update <wisp> --status open --metadata '{"state":"executed"}'`. You cannot close a wisp and you must not leave one claimed: resume reads `--status in_progress` as in-flight, and the discovery query above filters on `--status open`. Measured: 161 of 193 harness wisps in one campaign were left `in_progress` at the end of the run. A resumed campaign would have read all 161 as still running and discovered none of them as work, so a claim never released is the same as a harness lost.
+MUST Release every wisp you claimed back to `open` with its state stamped: `bd set-state <wisp> state=executed --reason "<runner> ran to <cap or exit>"`, then `bd update <wisp> --status open`. Use `bd set-state`, never a metadata `state`, per `references/beads-store.md`. You cannot close a wisp and you must not leave one claimed: resume reads `--status in_progress` as in-flight, and the discovery query above filters on `--status open`. Measured: 161 of 193 harness wisps in one campaign were left `in_progress` at the end of the run. A resumed campaign would have read all 161 as still running and discovered none of them as work, so a claim never released is the same as a harness lost.
 
 Before running anything, `ls -l` every `harness_path` and `control_path` on the
 wisps you claimed.
@@ -125,7 +126,7 @@ wisps you claimed.
 You may not fix a harness, and a broken harness must not leave its entry point
 silently uncovered. File the re-authoring request into the graph:
 
-    RE=$(bd create "re-author: <harness title>" --parent <surface-bead> --labels sab-harness,sab-audit,non-work --json \
+    RE=$(bd create "re-author: <harness title>" --parent <surface-bead> --labels sab-harness,sab-audit,non-work --no-inherit-labels --json \
       --metadata '{"run_id":"<RUN_ID>","entry_point":"<file:line>","reason":"<absent|fails-in-own-fixture|unsound-assertion>","supersedes":"<original wisp id>"}' | jq -r '.id')
     bd dep add "$RE" <original-wisp> --type discovered-from
 
@@ -162,8 +163,8 @@ and call it fuzzed. See `references/isolation.md`.
 
 ## Budget (hard cap, approved by the user)
 - Per-harness wall-clock: <wall_s>s   Jobs: <jobs>   Memory: <mem_mb>MB
-- Stop at the cap. When a harness hits it with coverage still climbing, stamp
-  state:budget_exhausted rather than reporting a clean result.
+- Stop at the cap. When a harness hits it with coverage still climbing, run
+  `bd set-state <wisp> state=budget_exhausted` rather than reporting a clean result.
 
 ## Your reference
 Read `references/surfaces/<SURFACE>.md` FIRST: it is your tool recipe list, attack
@@ -189,15 +190,17 @@ catalogue.
    detached from the run graph, and one without `run_id` reads as a stamping gap in
    the report. Persist every crashing input and record the exact reproduce command.
 
-     FINDING=$(bd create "finding: <one-line claim>" --parent <surface-bead> --labels sab-finding,sab-audit --json \
-       --metadata '{"run_id":"<RUN_ID>","source":"<synthesized-rule|stock-pack|harness|read>","locus":"<file:line>","surface":"<surface>","path":"<entry to sink>","dedup_key":"<surface>:<locus>:<class>","root_cause":"<one phrase>"}' | jq -r '.id')
+     FINDING=$(bd create "finding: <one-line claim>" --parent <surface-bead> --labels sab-finding,sab-audit --no-inherit-labels --json \
+       --metadata '{"run_id":"<RUN_ID>","source":"<synthesized-rule|stock-pack|harness|read>","locus":"<file:line>","surface":"<surface>","path":"<entry to sink>","dedup_key":"<locus>:<class>","root_cause":"<one phrase>"}' | jq -r '.id')
      bd dep add "$FINDING" <harness-bead> --type discovered-from
      # a crash instead: bd dep add <crash-bead> <harness-bead> --type caused-by
 
    The `<RUN_ID>` is the run_id this Brief carries; copy it verbatim. Do not tier
-   the finding (the challenger does that); leave tier, by, and impact unset.
+   the finding (the challenger does that); leave tier, by, and impact unset. Keep
+   `--no-inherit-labels`: without it the finding inherits the surface node's
+   `non-work` and drops out of the project's backlog.
 
-   MUST Stamp `dedup_key` as `<surface>:<locus>:<class>` lowercased, and `root_cause` as
+   MUST Stamp `dedup_key` as `<locus>:<class>` lowercased, with no surface prefix, and `root_cause` as
    one phrase, on every finding you file. The challenger dedups mechanically on
    `dedup_key` (`jq -r '.[].metadata.dedup_key' | sort | uniq -d`) and groups on
    `root_cause`, so a wisp missing either is invisible to both. Measured: one campaign
@@ -273,10 +276,10 @@ one layer, a reachability note half wrong in both directions.
 - Raise the budget, or continue past the cap.
 - Touch a network target, a shared service, or anything outside this repo.
 - File a finding without a file:line, or a crash without a persisted input.
-- Report a stock pack match as a finding above HARDENING unless the trust map places it on a path.
+- Record a stock pack match with a `path` unless the trust map places it on one. The challenger caps an off-path stock match at HARDENING.
 
 ## Rules
-MUST Tier a stock pack match at HARDENING unless the Brief's trust map places it on a reachable path, since a generic match carries no knowledge of this repo.
+MUST Stamp `source=stock-pack` on every stock pack match, and record `path` only when the Brief's trust map places the match on a reachable path, since a generic match carries no knowledge of this repo and the challenger tiers it from those two fields.
 MUST Re-verify each synthesized rule against its known-positive fixture before trusting a zero-match result, and report the rule as INVALID when the fixture does not match, because a rule that matches nothing is indistinguishable from a repo with no findings.
 MUST Report which findings came from synthesized rules against stock packs, because a campaign carried entirely by stock packs skipped real recon and the report must say so.
 MUST Report a harness result as UNTESTED with no verdict when its benign control also failed. A hostile-vector failure alongside a failing control says nothing about the guard: the failure may be the guard working, the harness being wrong, or the fixture not building. This holds in reverse for an expected-to-pass harness whose control never ran.
@@ -284,10 +287,11 @@ MUST Say which build profile produced a panic before reporting one. A `debug_ass
 MUST Report a zero-match structural scan as "0 matches, with the engine's blind spot named", never as a clean surface. Pair the rule with a textual count when the pattern can appear inside a construct the parser treats as opaque, and report both numbers.
 
 ## Return
-The Gremlin Output format from your agent definition: a coverage block naming
-every tool run, skipped, or invalid; the wisp ids you filed; a findings table; a
-`RE-AUTHOR REQUESTED` list; and a `PREMISE CORRECTIONS` list.
-Do not tier the findings; the challenger does that.
+The thin return from your agent definition: the L1 STATUS line, the counts, the
+crash-wisp and finding-wisp id range, and the coverage artifact path, plus the
+`RE-AUTHOR REQUESTED` and `PREMISE CORRECTIONS` lists and the tool-integrity
+certification. The findings live in the wisps, so return no findings table, and
+tier nothing; the challenger does that.
 ```
 
 ---

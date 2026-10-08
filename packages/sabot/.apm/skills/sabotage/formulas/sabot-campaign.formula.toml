@@ -352,7 +352,7 @@ and drops a real defect out of the project's queue.
 
 File one `sab-coverage` wisp per node with `entry_points_total` and
 `entry_points_executed` -- a harness count cannot express "13 of 706". Release every
-claimed wisp back to `open` with `state` stamped. Certify tool integrity, or every
+claimed wisp back to `open` with its state set by `bd set-state`. Certify tool integrity, or every
 tool-sourced finding on the surface caps at HARDENING."""
 
 [steps.metadata]
@@ -398,20 +398,25 @@ description = """Step 10. Brief from references/triager-brief.md.
 Skip as a no-op when step 6 closed the memory-safety class, and record it as
 `skipped-because-closed` rather than as a clean triage.
 
-`triager` claims each crash batch, re-runs the recorded command FIRST and quotes both
-exit codes, dedups by normalized stack, and minimizes each crash to its smallest
-reproducing input. Check `wc -c` and refuse a 0-byte result. Keep the original input
-beside the minimized one and stamp both paths.
+`triager` claims each crash batch and replays every crash inside the surface image
+through run-contained.sh with a per-repro `--timeout`, never on the host. It re-runs
+the recorded command FIRST and quotes both exit codes, dedups by normalized stack, and
+minimizes each crash to its smallest reproducing input. A 0-byte result stands only
+when its replay matches the original crash signature. Keep the original input beside
+the minimized one and stamp both paths.
 
 State what you normalized: stripping an in-function line offset is defensible, stripping
 the panic message is not.
 
-Stamp `state:minimized`, `kind`, `minimized_path`, `minimized_bytes`, `original_path`,
-`repro_cmd`, `repro_rc`, and `dedup_key`, copying those key names VERBATIM -- a triager
-that invented `min_input` and `triage_class` once wrote seven files to disk that no part
-of the report could reach. Read every wisp back and paste the missing-key diff.
+Stamp `kind`, `minimized_path`, `minimized_bytes`, `original_path`, `repro_cmd`,
+`repro_rc`, and `dedup_key`, copying those key names VERBATIM -- a triager that invented
+`min_input` and `triage_class` once wrote seven files to disk that no part of the report
+could reach -- and set `state=minimized` with `bd set-state`. Read every wisp back and
+paste the missing-key diff. File one untiered finding per distinct crash with
+`--no-inherit-labels`, linked `discovered-from` to every crash in its group.
 
-The triager tiers nothing, edits nothing, and never re-fuzzes to find a fresh crash."""
+The triager tiers nothing, assigns no impact, edits nothing, and never re-fuzzes to
+find a fresh crash."""
 
 [steps.metadata]
 skill_hints = "sabot:sabotage"
@@ -469,9 +474,10 @@ appendix to tiering, and one live run went from step 11 straight to the report -
 tiered findings, zero patterns, and nothing detected the omission.
 
 Histogram `root_cause` across the tiered findings (`bd list --label sab-finding
---metadata-field run_id=<id>`). File a pattern wisp per `root_cause` spanning two or
-more nodes, stamped `kind`, `instances`, `nodes`, `impact`, `root_cause`, and labelled
-`sab-pattern,sab-audit,non-work`.
+--metadata-field run_id=<id> --all --limit 0 --json`; without `--limit 0` bd returns
+the first 50 rows). File a pattern wisp per `root_cause` spanning two or more nodes,
+stamped `kind`, `instances`, `nodes`, `impact`, `root_cause`, labelled
+`sab-finding,sab-pattern,sab-audit`, and created with `--no-inherit-labels`.
 
 Rank a pattern by instance count and node span. NEVER let a pattern replace its
 instances: the instances keep their own rows and the pattern is an additional finding.

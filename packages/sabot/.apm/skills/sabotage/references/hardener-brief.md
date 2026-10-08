@@ -1,8 +1,9 @@
 # Hardener Brief Template
 
 Construct one Brief per approved finding at step 15. `hardener` patches product code,
-writes a regression test, graduates the rule into the repo's own lint config, and
-re-runs the exact scanner and harness that produced the finding.
+writes a regression test, graduates the rule into the repo's own lint config when the
+approval covers that, and re-runs the exact scanner and harness that produced the
+finding.
 
 Pass the approval verbatim and one finding id. Approval for one finding approves that
 finding alone.
@@ -25,15 +26,17 @@ Read the finding wisp before you touch anything:
     bd show <finding> --json > <artifacts>/fix-<finding>.json
 
 ## One approval, one finding
-Approval names a finding id. A neighbouring locus with the same root cause, a second
-instance in the same group, and a defect you notice while patching are all unapproved.
+Approval names a finding id and covers that defect's complete fix: the locus, the
+direct callers the fix requires, and the tests whose expectation it legitimately
+changes. A neighbouring locus with the same root cause, a second instance in the same
+group, and a defect you notice while patching are all unapproved.
 
 | Situation | Action |
 |---|---|
-| the approved finding | patch it |
+| the approved finding, including a caller or test its fix requires | patch it |
 | another instance sharing its `root_cause` | file a follow-up wisp with `discovered-from`, and report it as awaiting approval |
 | a defect you found while reading | file a finding wisp, do not patch |
-| the fix cannot be made without touching an unapproved file | stop and report BLOCKED with the file list |
+| the fix changes behavior the approval did not cover: a public contract, a numeric bound, or a caller outside the finding's call path | stop and report ESCALATED with the file list and what the real fix requires |
 
 MUST Quote the approval in your return, and name the single finding id it covers. A group of instances patched under one approval spends an approval nobody gave.
 
@@ -70,8 +73,10 @@ MUST Re-run the SAME scanner invocation and the SAME harness that produced the f
 MUST Report the fix as UNVERIFIED when any check above cannot be run, and say which. An unverified fix presented as verified is worse than an open finding, because it closes the finding.
 
 ## Graduate the rule, not just the instance
-A regression test guards one locus. Only the rule guards the next one. For every
-PROVEN finding, land the detecting rule in the repo's own configuration so CI runs it.
+A regression test guards one locus. Only the rule guards the next one. When the
+recorded approval covers graduation, land the detecting rule in the repo's own
+configuration so CI runs it; without that approval, record the rule as proposed and
+leave the config alone.
 
 | Where the finding came from | What to land |
 |---|---|
@@ -119,9 +124,11 @@ NOT Never make a check pass by editing the check's configuration. That is the sa
 Write one test per PROVEN finding, beside the repo's existing tests, in the repo's own
 convention. Prove the pre-patch failure and the post-patch pass, and stamp it:
 
-    TEST=$(bd create "regression: <finding title>" --parent <finding> --labels sab-harness --json \
+    TEST=$(bd create "regression: <finding title>" --parent <finding> --labels sab-harness,sab-audit,non-work --no-inherit-labels --json \
       --metadata '{"run_id":"<RUN_ID>","test_path":"<abs>","test_name":"<name>","pre_patch":"fail","post_patch":"pass"}' | jq -r '.id')
     bd dep add "$TEST" <finding> --type validates
+
+MUST Pass `--no-inherit-labels` on the regression wisp. Parented to the finding, it would otherwise inherit `sab-finding` and every finding query, the challenger's work list included, would count it as a second finding.
 
 ## What you MUST NOT do
 - Patch anything the approval does not name.
@@ -132,9 +139,12 @@ convention. Prove the pre-patch failure and the post-patch pass, and stamp it:
 - Report a fix as verified on a wrapper exit code alone.
 
 ## Stamp the fix
-    bd update <finding> --status in_progress --metadata '{"state":"patched","patch_files":["<abs>"],"regression_test":"<TEST id>","rule_graduated":"<config path or null>","verified_by":["<scanner invocation>","<harness wisp id>"],"verification":"<verified|UNVERIFIED>"}'
+    bd update <finding> --metadata '{"patch_files":["<abs>"],"regression_test":"<TEST id>","rule_graduated":"<config path or null>","verified_by":["<scanner invocation>","<harness wisp id>"],"verification":"<verified|UNVERIFIED>"}'
+    bd set-state <finding> state=patched --reason "patched; verification=<verified|UNVERIFIED>"
+    bd update <finding> --status in_progress
     bd comment <finding> "PATCHED files=<n> test=<TEST id> rule=<config path> verification=<verified|UNVERIFIED> evidence=<abs artifact path>"
-Read the wisp back after stamping.
+Use `bd set-state`, never a metadata `state`, per `references/beads-store.md`. Read
+the wisp back after stamping.
 
 ## Return
 The Hardener Output format from your agent definition: the approval quoted, the single

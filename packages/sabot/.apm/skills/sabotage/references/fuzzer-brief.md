@@ -103,8 +103,11 @@ harness that EXECUTES it. A destructive-looking payload is data the target parse
    `--parent <surface>` and `run_id` are both required, or the harness is invisible
    to the gremlin's discovery query and never runs:
 
-     HARNESS=$(bd create "harness: <entry point>" --parent <surface-bead> --labels sab-harness,sab-audit,non-work --json \
+     HARNESS=$(bd create "harness: <entry point>" --parent <surface-bead> --labels sab-harness,sab-audit,non-work --no-inherit-labels --json \
        --metadata '{"run_id":"<RUN_ID>","entry_point":"<file:line>","runner":"<cargo fuzz|pytest|fuzz-cli>","harness_path":"<path>","control_path":"<path or none>","expected":"<pass|fail>","input_shape":"<from recon>"}' | jq -r '.id')
+     bd set-state "$HARNESS" state=pending --reason "authored, not yet run"
+
+   `--no-inherit-labels` keeps the surface node's `sab-surface` label off the harness.
 
 ## Prove the files exist before you return
 Run `wc -l` over every path you claim to have written, and paste the output verbatim

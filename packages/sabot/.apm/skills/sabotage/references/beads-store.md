@@ -13,13 +13,17 @@ session, and a campaign that cannot resume is a campaign that must restart.
 
 ```
 command -v bd >/dev/null || { echo "sabot requires the beads CLI (bd)"; exit 1; }
-bd info >/dev/null 2>&1 || bd init --stealth --prefix sab
+if bd where >/dev/null 2>&1; then :          # a store answers: use it
+elif [ -e .beads ]; then echo "sabot: .beads exists but bd cannot open it; repair it before the run"; exit 1
+else bd init --stealth --prefix sab; fi
 ```
 
 No `bd` on PATH stops the run: tell the user to install beads. There is no
-fallback store. A present `bd` with no database gets `bd init --stealth --prefix
-sab`, which is git-invisible (writes `.git/info/exclude`, leaves `git status`
-clean).
+fallback store. Only a repo with NO `.beads` at all gets `bd init --stealth
+--prefix sab`, which is git-invisible (writes `.git/info/exclude`, leaves `git
+status` clean).
+
+MUST Initialize only when the store is absent. A `.beads` that `bd` cannot open is a lock, a connectivity, or a corruption fault, and `bd init` over it creates a second ledger beside the user's while every later write lands in the wrong one. Stop and report the error instead.
 
 ## Invoking `bd` at all: three ways the command silently produces nothing
 
@@ -66,13 +70,16 @@ against a store with correct edges:
 
 | Query | Scope | Use it for |
 |---|---|---|
-| `bd list --parent <bead>` | direct children only | reading one level, such as the surface nodes under an epic |
-| `bd ready --parent <bead>` | every descendant | claiming work under a node, including harness wisps two levels down |
+| `bd list --parent <bead> --limit 0` | direct children only | reading one level, such as the surface nodes under an epic, and discovering a surface's harness wisps |
+| `bd ready --parent <bead>` | every descendant | driving the poured formula steps under the molecule root, never discovering wisps: on bd 1.1.2 it also returns `non-work` wisps (see below) |
 
-So a gremlin claiming its harnesses wants `bd ready --parent <node> --label
-sab-harness --claim`, which reaches grandchildren and claims atomically. A rollup
-over a whole campaign needs `--metadata-field run_id`, because
-`bd list --parent <epic>` stops at the surface nodes.
+So a gremlin discovers its harnesses with `bd list --parent <surface> --label
+sab-harness --status open --limit 0`, since each harness is a direct child of its
+surface node, then claims each with `bd update <wisp> --claim`, which is atomic and
+first-wins. A rollup over a whole campaign needs `--metadata-field run_id`, because
+`bd list --parent <epic> --limit 0` stops at the surface nodes.
+
+MUST Pass `--limit 0` on every `bd list` work or rollup query. `bd list` returns 50 rows by default with no truncation notice, so "all findings by tier" over a 388-finding campaign reads as a 50-finding one.
 
 | Object | Beads representation |
 |---|---|
@@ -93,7 +100,7 @@ EPIC=$(bd create "sabot run-<id>" --type epic --json \
   --metadata '{"run_id":"run-<id>","target":"<resolved target>","base_sha":"<sha>","budget":{"wall_s":60,"jobs":4,"mem_mb":2048},"artifacts":"<abs>/.sabot/run-<id>/artifacts"}' \
   | jq -r '.id')
 # Every child carries run_id=run-<id> too, since rollups filter on it (see below).
-S1=$(bd create "surface: shell" --parent "$EPIC" --labels sab-surface,sab-audit,non-work --json \
+S1=$(bd create "surface: shell" --parent "$EPIC" --labels sab-surface,sab-audit,non-work --no-inherit-labels --json \
   --metadata '{"run_id":"run-<id>","surface":"shell","scope":["packages/*/scripts/**","**/*.sh"]}' \
   | jq -r '.id')
 bd dep cycles                 # must stay clean
@@ -108,7 +115,7 @@ gates.
 
 MUST Label EVERY campaign bead `sab-audit`, alongside its own `sab-*` label. This is the one label a project's own queries can exclude on, so it is what separates an audit's records from the project's work. Measured: one campaign left 680 beads in a product repo's store, of which 329 were not product defects, and the project's "close every bead" release gate blocked on the audit's own bookkeeping.
 MUST Label every non-defect record `non-work` too: harness, crash, and coverage wisps, AND surface nodes, AND a finding tiered REFUTED, AND a finding whose locus is inside the run's own artifacts dir. Measured: 22 surface roots, 24 coverage records, and 6 crash records finished one campaign with no `non-work` label, because the rule named only three of the buckets and nothing checked any of them.
-MUST Pass `--no-inherit-labels` on every finding create. `bd create --parent` copies the parent's labels onto the child by default, and every surface node carries `non-work`, so a finding parented to one inherits `non-work` and drops out of the project's work queue while the create command that made it named only `sab-finding,sab-audit`. Measured: 51 of 388 findings in one campaign carried `non-work`, of which 36 REFUTED and 6 HARDENING and 2 audit-tooling were correct, leaving 5 PROVEN and 2 REACHABLE product defects excluded from the backlog by a label no agent wrote.
+MUST Pass `--no-inherit-labels` on every child create, and name the child's labels in full. `bd create --parent` copies the parent's labels onto the child by default, and every surface node carries `non-work` and `sab-surface`, so a finding parented to one inherits `non-work` and drops out of the project's work queue while the create command that made it named only `sab-finding,sab-audit`, and a harness or regression wisp inherits a bucket label it does not belong to. Measured: 51 of 388 findings in one campaign carried `non-work`, of which 36 REFUTED and 6 HARDENING and 2 audit-tooling were correct, leaving 5 PROVEN and 2 REACHABLE product defects excluded from the backlog by a label no agent wrote.
 MUST File a defect in the audit's OWN tooling as a finding with its locus inside the artifacts dir, labelled `non-work`. A misfiring synthesized rule is real and worth fixing, and it is not a defect in the product. Measured: 6 such findings in one campaign were tiered PROVEN or REACHABLE and counted among the product's, and only 2 of the 6 announced it in their title, so the locus is the signal and the title is not.
 MUST Parent every campaign bead under its own surface node, and verify the edge target matches the bead's id prefix. Measured: one campaign's 21 surface nodes carried ids under the run epic while their `parent-child` edges pointed at twelve unrelated project beads, one of them a task titled "epic: test execution gaps". `report-json.py` walked the edge, reached 0 of 680 beads, and rendered an empty report at exit 0, so a whole campaign read as a clean audit.
 
@@ -141,7 +148,7 @@ graph rather than from a parent's prose.
 |---|---|---|---|
 | 7 | `sabot-fuzzer` | harness wisp per entry point | `gremlin` for that surface |
 | 8 | `gremlin` | crash wisp per distinct crash, finding wisp per non-crash finding | `triager` (crashes), `sabot-challenger` (findings) |
-| 10 | `triager` | finding wisp per minimized crash, closes the crash wisp | `sabot-challenger` |
+| 10 | `triager` | finding wisp per distinct crash; stamps each crash wisp and closes none | `sabot-challenger` |
 | 11 | `sabot-challenger` | tier stamp on each finding wisp | main thread at report time |
 | 15 | `hardener` | patch record on the finding wisp | main thread for verification |
 
@@ -149,7 +156,7 @@ A `gremlin` discovers its work with:
 
 ```
 cd <repo root>
-bd list --parent <surface> --label sab-harness --status open --json > <artifacts>/wisps-<surface>.json
+bd list --parent <surface> --label sab-harness --status open --limit 0 --json > <artifacts>/wisps-<surface>.json
 bd update <harness-wisp> --claim        # atomic, first-wins, sets assignee
 ```
 
@@ -172,7 +179,7 @@ MUST Re-read a surface node's status immediately before spawning an agent agains
 
 ### A handoff you cannot query is not a handoff
 
-MUST Verify your own wisps are discoverable by the documented query before returning. Run the receiving agent's exact discovery command (the `bd list --parent ... --label ...` above) and assert the count equals the number you filed. A mismatch means the label, the parent, or the flag is wrong, and the author fixes it. In one run the orchestrator had to relabel one surface's wisps and reconstruct another's by hand because both shipped invisible to that query.
+MUST Verify your own wisps are discoverable by the documented query before returning. Run the receiving agent's exact discovery command (the `bd list --parent ... --label ... --limit 0` above) and assert the count equals the number you filed. A mismatch means the label, the parent, or the flag is wrong, and the author fixes it. In one run the orchestrator had to relabel one surface's wisps and reconstruct another's by hand because both shipped invisible to that query.
 MUST Report the verified count in your return, not the count you intended to file. "11 wisps filed, 11 returned by the gremlin's discovery query" is checkable; "11 harnesses written" is not.
 
 ### An out-of-lane finding goes into the graph, not into your reply
@@ -221,7 +228,7 @@ transition record.
 |---|---|---|---|
 | `pending` | `open` | `state:pending` | creator at `bd create` |
 | `claimed` | `in_progress` | `state:claimed` | claim-holder after `bd update --claim` |
-| `executed` | `in_progress` | `state:executed` | `gremlin` after a harness runs to its cap |
+| `executed` | `open` | `state:executed` | `gremlin` after a harness runs to its cap, releasing its claim |
 | `minimized` | `in_progress` | `state:minimized` | `triager` after the input shrinks |
 | `tiered` | `in_progress` | `state:tiered` | `sabot-challenger` after the verdict |
 | `patched` | `in_progress` | `state:patched` | `hardener` after the verification re-run |
@@ -244,7 +251,7 @@ generator reads structure rather than prose:
 
 ```
 FINDING=$(bd create "finding: <one-line claim>" --parent <surface> --labels sab-finding,sab-audit --no-inherit-labels --json \
-  --metadata '{"run_id":"run-<id>","tier":"PROVEN","by":"challenger","source":"synthesized-rule","impact":"HIGH","locus":"src/auth/token.rs:88","surface":"code","node":"<surface node bead>","cwe":"CWE-190","repro":"<abs path to minimized input>","path":"handle_post -> parse_body -> alloc @ api.rs:41","evidence":"<abs artifact path or exact command>","control_passed":true,"dedup_key":"code:src/auth/token.rs:88:CWE-190","root_cause":"unchecked arithmetic at the IPC boundary","not_executed_reason":null}' \
+  --metadata '{"run_id":"run-<id>","tier":"PROVEN","by":"challenger","source":"synthesized-rule","impact":"HIGH","locus":"src/auth/token.rs:88","surface":"code","node":"<surface node bead>","cwe":"CWE-190","repro":"<abs path to minimized input>","path":"handle_post -> parse_body -> alloc @ api.rs:41","evidence":"<abs artifact path or exact command>","control_passed":true,"dedup_key":"src/auth/token.rs:88:cwe-190","root_cause":"unchecked arithmetic at the IPC boundary","not_executed_reason":null}' \
   | jq -r '.id')
 ```
 
@@ -264,7 +271,7 @@ of the session.
 | `node` | the surface node bead this finding belongs to. `--parent` already sets it, and the field makes it readable from the finding alone by a rollup that queries on `run_id` |
 | `evidence` | one absolute artifact path or one exact command. The report's evidence column reads this field, so a finding without it is HARDENING at best |
 | `control_passed` | `true` · `false` · `null` (no control applies). `false` means the locus is UNTESTED, so the challenger caps it and the report lists it under NOT-EXECUTED |
-| `dedup_key` | `<surface>:<locus>:<class>`, lowercased. a key appearing on more than one wisp marks the same finding found twice, which is independent confirmation rather than two findings |
+| `dedup_key` | `<locus>:<class>`, lowercased, with no surface prefix, so the same defect filed from two surfaces gets one key. A key appearing on more than one wisp marks the same finding found twice, which is independent confirmation rather than two findings |
 | `root_cause` | one phrase naming the shared defect, identical across every finding sharing it. The grouping pass and the synthesis step both read this field, and neither can group on prose |
 | `not_executed_reason` | `null` on a real finding. On a placeholder wisp standing for an unexercised dimension, one of the gap reasons in `report-template.md` |
 
@@ -301,17 +308,17 @@ their own label scoped to the run with `--metadata-field run_id=<id>`.
 
 | Question | Command |
 |---|---|
-| campaign status | `bd list --label sab-surface --parent <epic> --all --json` |
-| all findings by tier | `bd list --label sab-finding --metadata-field run_id=<id> --all --json` then group by `metadata.tier` |
+| campaign status | `bd list --label sab-surface --parent <epic> --all --limit 0 --json` |
+| all findings by tier | `bd list --label sab-finding --metadata-field run_id=<id> --all --limit 0 --json` then group by `metadata.tier` |
 | a project's own backlog, audit excluded | the project's query plus `--exclude-label sab-audit`, which is why every campaign bead carries it |
-| audit beads missing the audit label | `bd list --metadata-field run_id=<id> --all --json` filtered to those whose `labels` lack `sab-audit` |
+| audit beads missing the audit label | `bd list --metadata-field run_id=<id> --all --limit 0 --json` filtered to those whose `labels` lack `sab-audit` |
 | one finding's story | `bd show <bead> --json` with `bd comments <bead>` |
-| unexecuted harnesses | `bd list --label sab-harness --metadata-field run_id=<id> --status open --json` |
-| coverage record per surface | `bd list --label sab-coverage --metadata-field run_id=<id> --all --json` |
-| coverage gaps | harnesses and findings carrying `state:budget_exhausted` or `state:invalid`: `bd list --metadata-field run_id=<id> --all --json` filtered on the `state:` label |
-| resume after crash | in-flight = `bd list --metadata-field run_id=<id> --status in_progress --all --json`; agent handle = bead `assignee` |
+| unexecuted harnesses | `bd list --label sab-harness --metadata-field run_id=<id> --exclude-label state:executed --all --limit 0 --json`: pending, claimed, invalid, and budget-exhausted alike |
+| coverage record per surface | `bd list --label sab-coverage --metadata-field run_id=<id> --all --limit 0 --json` |
+| coverage gaps | harnesses and findings carrying `state:budget_exhausted` or `state:invalid`: `bd list --metadata-field run_id=<id> --all --limit 0 --json` filtered on the `state:` label |
+| resume after crash | in-flight = `bd list --metadata-field run_id=<id> --status in_progress --limit 0 --json`; agent handle = bead `assignee` |
 | stamping gate | `sab-audit` is set on every campaign bead AND `non-work` on every non-defect record AND every REFUTED finding is `closed` AND every finding's priority matches the tier-impact table. Blocks NOTHING. Each condition is record hygiene that one `bd update` fixes, and none of it is evidence about the target |
-| coverage gate | `bd dep cycles` clean AND every detected surface node has a `sab-coverage` record AND no `sab-harness` wisp left `open`, `blocked`, or `in_progress` AND every `sab-finding` carries a `tier`. Blocks CLOSING A SURFACE NODE, never the report: an unmet condition here is a coverage gap, which is the report's subject matter |
+| coverage gate | `bd dep cycles` clean AND every detected surface node has a `sab-coverage` record AND every `sab-harness` wisp carries `state:executed` AND every `sab-finding` carries a `tier`. Blocks CLOSING A SURFACE NODE, never the report: an unmet condition here is a coverage gap, which is the report's subject matter |
 
 MUST Emit the report whatever the coverage gate says. An unrun harness, a missing coverage record, and an untiered finding are the report's SUBJECT, so a gate that withheld the report until they were resolved would withhold it exactly when it is most worth reading. The report states each one as a gap; step 15 is where a gap gets fixed, and only on explicit approval.
 MUST Fix a stamping-gate failure rather than reporting it. A missing label, a wrong priority, and a REFUTED finding left open are hygiene on the record and cost one `bd update` each; none of them is evidence about the target, so none belongs in the NOT-EXECUTED register.
@@ -322,12 +329,12 @@ MUST Drive that gate from the SURFACE-NODE list, never from the coverage-wisp li
 
 ```sh
 # WRONG: iterates the records that exist, so a node with no record is never visited
-bd list --label sab-coverage --metadata-field run_id="$RUN" --all --json | jq -r '.[].parent'
+bd list --label sab-coverage --metadata-field run_id="$RUN" --all --limit 0 --json | jq -r '.[].parent'
 
 # RIGHT: iterates the nodes that MUST have one, and names the ones that do not
 comm -23 \
-  <(bd list --label sab-surface --parent "$EPIC" --all --json | jq -r '.[].id' | sort) \
-  <(bd list --label sab-coverage --metadata-field run_id="$RUN" --all --json | jq -r '.[].parent' | sort)
+  <(bd list --label sab-surface --parent "$EPIC" --all --limit 0 --json | jq -r '.[].id' | sort) \
+  <(bd list --label sab-coverage --metadata-field run_id="$RUN" --all --limit 0 --json | jq -r '.[].parent' | sort)
 ```
 
 Any id the second form prints is a surface with no coverage record. Empty output is the only pass. Measured: one campaign's web node reached the gate with 9 findings and no coverage wisp while all 20 other nodes had one, and the record-driven form reported 20 of 20 covered.

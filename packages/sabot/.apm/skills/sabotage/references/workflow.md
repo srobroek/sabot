@@ -250,9 +250,11 @@ MUST Record this stage as GRANTED, DECLINED, or NOT-OFFERED in the report. A ski
 
 ## Step 10: triage crashes
 
-`triager` claims each crash batch. It dedups by stack, minimizes every input, then
-classifies memory-safety against robustness. Each minimized crash becomes a
-finding wisp, and its crash wisp closes.
+`triager` claims each crash batch. It replays every crash inside the surface image
+with a per-repro timeout, dedups by stack, minimizes every input, then classifies
+memory-safety against robustness. Each distinct crash gets one untiered finding wisp
+linked `discovered-from` to every crash in its group; the crash wisps stay as
+stamped records until the main thread closes them at report time.
 
 Skip this step when step 6 closed the memory-safety class and no crash wisp exists,
 and record it as skipped-because-closed with the crash count. Spawning a triager over
@@ -289,13 +291,13 @@ across nodes. Individual findings are the input; the output is a small set of na
 patterns, each with its instance list and its own impact. Query the graph rather than
 re-reading replies:
 
-    bd list --label sab-finding --metadata-field run_id=<id> --all --json > <artifacts>/findings.json
+    bd list --label sab-finding --metadata-field run_id=<id> --all --limit 0 --json > <artifacts>/findings.json
     jq -r '.[].metadata.root_cause' <artifacts>/findings.json | sort | uniq -c | sort -rn
 
 Any `root_cause` appearing across two or more surface nodes is a candidate pattern.
 For each one, file a pattern wisp on the epic:
 
-    bd create "pattern: <name>" --parent <epic> --labels sab-finding,sab-pattern --json \
+    bd create "pattern: <name>" --parent <epic> --labels sab-finding,sab-pattern,sab-audit --no-inherit-labels --json \
       --metadata '{"run_id":"<id>","kind":"systemic-pattern","instances":["<id>","<id>"],"nodes":["<node>","<node>"],"impact":"<LEVEL>","root_cause":"<phrase>"}'
 
 MUST Run this step on every run that produced more than one node's findings, and assign it explicitly (the main thread, or a `sabot-challenger` continued after tiering). One campaign's central conclusion, eight independent built-but-never-wired mechanisms whose self-checks all failed open, was noticed in passing by the orchestrator and was produced by no step in this file.
