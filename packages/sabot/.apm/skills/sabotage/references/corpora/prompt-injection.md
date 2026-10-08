@@ -1,7 +1,7 @@
 # Prompt-injection corpus
 
 The payload source of truth for the agent surface, where no deterministic scanner
-exists. `fuzzer` crosses each class below against every entry point where
+exists. `sabot-fuzzer` crosses each class below against every entry point where
 untrusted content enters the target, and `gremlin` judges whether the definition
 carries a rule that stops it.
 
@@ -47,7 +47,7 @@ when it can arrive somewhere:
 
 ## Scenario table
 
-`fuzzer` produces one row per reachable pair, and `gremlin` fills the last two
+`sabot-fuzzer` produces one row per reachable pair, and `gremlin` fills the last two
 columns:
 
 | Entry point | Payload class | Reachable? | Rule that stops it | Verdict |

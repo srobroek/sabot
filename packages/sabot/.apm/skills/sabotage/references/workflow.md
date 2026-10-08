@@ -194,7 +194,7 @@ MUST Keep the class in the report as a closed class with its census, since "we f
 
 ## Step 7: author the attack plan
 
-Spawn one `fuzzer` per surface, in parallel, Briefed from `fuzzer-brief.md`. Each
+Spawn one `sabot-fuzzer` per surface, in parallel, Briefed from `fuzzer-brief.md`. Each
 writes harnesses, corpora, vectors, and repo-specific rules from recon's
 invariants. It files a wisp per artifact and runs nothing.
 
@@ -260,7 +260,7 @@ zero crashes spends a role on nothing.
 
 ## Step 11: prove or refute
 
-`challenger` claims every untiered finding wisp and stamps a tier plus an impact,
+`sabot-challenger` claims every untiered finding wisp and stamps a tier plus an impact,
 Briefed from `challenger-brief.md`. Nothing is deleted. Where several findings share
 a primitive, the challenger tests whether they chain per `escalation.md` and tiers
 the chain at its endpoint impact, since two MEDIUM primitives that reach code
@@ -269,9 +269,9 @@ execution together are a CRITICAL that separate rows hide.
 `quick` mode skips this step, and its report states that every finding is untiered.
 
 **Solo / non-interactive runs.** A single agent that ran the finding step cannot
-also be the independent `challenger` without breaking "neither judges its own
+also be the independent `sabot-challenger` without breaking "neither judges its own
 output". The report must say which honest path was taken:
-- **Spawn `challenger` anyway** when the run can spawn an agent (the default, even
+- **Spawn `sabot-challenger` anyway** when the run can spawn an agent (the default, even
   non-interactively): it is a fresh context that did not produce the findings, so
   the independence holds.
 - **Tier inline, marked provisional** only when spawning is impossible (a leaf
@@ -279,7 +279,7 @@ output". The report must say which honest path was taken:
   headlines that no independent pass ran, so a reader never mistakes a self-tier
   for a challenged one.
 
-MUST Prefer spawning `challenger` even in a non-interactive run, since independence comes from a fresh context rather than from a human being present.
+MUST Prefer spawning `sabot-challenger` even in a non-interactive run, since independence comes from a fresh context rather than from a human being present.
 MUST Mark an inline tier `by=self` and headline the missing independent pass when spawning was impossible, because a self-judged finding presented as challenged is the dishonesty the two-agent split exists to prevent.
 
 ## Step 12: synthesize the systemic patterns
@@ -298,7 +298,7 @@ For each one, file a pattern wisp on the epic:
     bd create "pattern: <name>" --parent <epic> --labels sab-finding,sab-pattern --json \
       --metadata '{"run_id":"<id>","kind":"systemic-pattern","instances":["<id>","<id>"],"nodes":["<node>","<node>"],"impact":"<LEVEL>","root_cause":"<phrase>"}'
 
-MUST Run this step on every run that produced more than one node's findings, and assign it explicitly (the main thread, or a `challenger` continued after tiering). One campaign's central conclusion, eight independent built-but-never-wired mechanisms whose self-checks all failed open, was noticed in passing by the orchestrator and was produced by no step in this file.
+MUST Run this step on every run that produced more than one node's findings, and assign it explicitly (the main thread, or a `sabot-challenger` continued after tiering). One campaign's central conclusion, eight independent built-but-never-wired mechanisms whose self-checks all failed open, was noticed in passing by the orchestrator and was produced by no step in this file.
 MUST Rank a pattern by its instance count and its span across nodes, and report it above the individual findings. A defect appearing on eight nodes is an engineering-practice finding, and its per-node rows read as eight unrelated bugs.
 MUST File each pattern as its own wisp with its instance ids. A pattern living only in the report's prose is lost to the next campaign, which re-derives it or misses it.
 NOT Never let a pattern replace its instances. The instances keep their rows and their fixes; the pattern is an additional finding, per the no-delete rule.
@@ -346,7 +346,7 @@ it pass is what audit-only withholds). See the write policy below.
 | An agent dies mid-campaign | resume from beads per `beads-store.md`, since its wisps survive |
 | The budget runs out with harnesses unrun | stop, and list every unrun harness as a gap |
 | A crash does not reproduce | a harness bug rather than a target bug, recorded as INVALID |
-| A harness file named in a wisp does not exist on disk | NOT EXECUTED, never a pass: `state:invalid` on the wisp plus a re-author wisp back to `fuzzer` |
+| A harness file named in a wisp does not exist on disk | NOT EXECUTED, never a pass: `state:invalid` on the wisp plus a re-author wisp back to `sabot-fuzzer` |
 | A harness runs but its benign control fails | both surfaces UNTESTED: no verdict either way, and nothing resting on it may be tiered above HARDENING |
 | A gremlin finds a defect outside its scope globs | file it under the surface node whose globs contain the locus per `beads-store.md`, do not investigate, do not drop |
 | A Brief premise turns out to be false | file a premise-correction comment on the surface node and state it in the return, for the report's premise-corrections section |

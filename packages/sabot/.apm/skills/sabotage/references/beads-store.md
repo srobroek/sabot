@@ -139,10 +139,10 @@ graph rather than from a parent's prose.
 
 | Step | Writer | Creates | Claimed by |
 |---|---|---|---|
-| 7 | `fuzzer` | harness wisp per entry point | `gremlin` for that surface |
-| 8 | `gremlin` | crash wisp per distinct crash, finding wisp per non-crash finding | `triager` (crashes), `challenger` (findings) |
-| 10 | `triager` | finding wisp per minimized crash, closes the crash wisp | `challenger` |
-| 11 | `challenger` | tier stamp on each finding wisp | main thread at report time |
+| 7 | `sabot-fuzzer` | harness wisp per entry point | `gremlin` for that surface |
+| 8 | `gremlin` | crash wisp per distinct crash, finding wisp per non-crash finding | `triager` (crashes), `sabot-challenger` (findings) |
+| 10 | `triager` | finding wisp per minimized crash, closes the crash wisp | `sabot-challenger` |
+| 11 | `sabot-challenger` | tier stamp on each finding wisp | main thread at report time |
 | 15 | `hardener` | patch record on the finding wisp | main thread for verification |
 
 A `gremlin` discovers its work with:
@@ -155,7 +155,7 @@ bd update <harness-wisp> --claim        # atomic, first-wins, sets assignee
 
 ### Who may close a surface node
 
-`sabot-scout`, `fuzzer`, and `gremlin` all write to the same surface node in sequence, so
+`sabot-scout`, `sabot-fuzzer`, and `gremlin` all write to the same surface node in sequence, so
 closing it is the one verb they cannot each decide for themselves. A closed node
 refuses `bd update --claim` ("issue not claimable: status closed") while its wisps
 still parent fine, so the work looks scheduled and never runs.
@@ -163,7 +163,7 @@ still parent fine, so the work looks scheduled and never runs.
 | Agent | May set the node to | Must never |
 |---|---|---|
 | `sabot-scout` | `in_progress` while working, back to `open` when its artifacts are filed | `closed`; the fuzzer and gremlin still have to claim it |
-| `fuzzer` | `in_progress`, back to `open` | `closed` |
+| `sabot-fuzzer` | `in_progress`, back to `open` | `closed` |
 | `gremlin` | `in_progress`, back to `open` after filing its `sab-coverage` wisp | `closed` |
 | main thread | `closed`, at step 14 only | close a node before its `sab-coverage` wisp exists |
 
@@ -196,7 +196,7 @@ the moment it files the wisp:
 | `discovered-from` | finding -> harness | `gremlin` | this finding came out of running that harness |
 | `discovered-from` | finding -> crash | `triager` | this finding is the minimized form of that crash |
 | `caused-by` | crash -> harness | `gremlin` | that harness produced this crash |
-| `relates-to` | chain finding -> each constituent | `challenger` | the chain is built from these findings |
+| `relates-to` | chain finding -> each constituent | `sabot-challenger` | the chain is built from these findings |
 | `validates` | regression test wisp -> finding | `hardener` | this test proves that finding is fixed |
 | `supersedes` | re-run finding -> prior finding | `hardener` | the verification re-run replaced the original |
 
@@ -223,7 +223,7 @@ transition record.
 | `claimed` | `in_progress` | `state:claimed` | claim-holder after `bd update --claim` |
 | `executed` | `in_progress` | `state:executed` | `gremlin` after a harness runs to its cap |
 | `minimized` | `in_progress` | `state:minimized` | `triager` after the input shrinks |
-| `tiered` | `in_progress` | `state:tiered` | `challenger` after the verdict |
+| `tiered` | `in_progress` | `state:tiered` | `sabot-challenger` after the verdict |
 | `patched` | `in_progress` | `state:patched` | `hardener` after the verification re-run |
 | `reported` | `closed` | `state:reported` | main thread at report emit |
 | `budget_exhausted` | `open` | `state:budget_exhausted` | `gremlin` when a harness hits its cap with coverage still growing |
@@ -354,8 +354,8 @@ than silently dropped. The script flags any such wisp in a `stamping_gaps` list,
 the missing stamp is visible instead of costing a finding. (`--run-id <id>` still
 works as an alias that resolves the epic.)
 
-The same graph carries work between agents, since each of `sabot-scout`, `fuzzer`,
-`gremlin`, `triager`, and `challenger` reads its inputs from the wisps a prior agent
+The same graph carries work between agents, since each of `sabot-scout`, `sabot-fuzzer`,
+`gremlin`, `triager`, and `sabot-challenger` reads its inputs from the wisps a prior agent
 filed (see Handoff chain). Correlation needs no join table: the parent edge places
 each wisp on its surface under the epic, and the typed edges (`discovered-from`,
 `caused-by`, `relates-to`) link a finding to the harness, crash, or chain it came
@@ -400,7 +400,7 @@ run with `--metadata-field run_id=<id>`:
    completed), or `open` with `state:budget_exhausted` (ran out of clock with
    coverage climbing). Skip any carrying `state:executed`.
 3. List crash wisps still `open` and hand them to a fresh `triager`.
-4. List finding wisps with no `tier` and hand them to `challenger`.
+4. List finding wisps with no `tier` and hand them to `sabot-challenger`.
 5. Report from the graph.
 
 MUST Include `state:invalid` and `state:budget_exhausted` harnesses in the resume set. An INVALID harness is `blocked` rather than `open`, so a resume that lists only `open` harnesses silently drops the exact entry points the previous run failed to test.

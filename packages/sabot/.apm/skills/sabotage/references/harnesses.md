@@ -1,7 +1,7 @@
 # Harness patterns
 
-Authoring rules for `fuzzer`. A harness is code that feeds a target inputs and
-asserts an invariant. `fuzzer` writes it and runs nothing; `gremlin` executes it.
+Authoring rules for `sabot-fuzzer`. A harness is code that feeds a target inputs and
+asserts an invariant. `sabot-fuzzer` writes it and runs nothing; `gremlin` executes it.
 
 ## Where harnesses go
 
@@ -70,7 +70,7 @@ entry point, and assert no panic. Add a round trip when a renderer exists. Seed
 from every fixture in the repo's testdata.
 
 **CLI or hook.** Use the shipped `scripts/fuzz-cli.py` rather than writing a new
-harness. `fuzzer`'s job here is the vectors file. Run `fuzz-cli.py --vectors-help`
+harness. `sabot-fuzzer`'s job here is the vectors file. Run `fuzz-cli.py --vectors-help`
 for the authoritative schema; do not infer it from the script.
 
 Each vector is one JSON object with four fields:
@@ -113,7 +113,7 @@ real robustness finding.
 
 **Agent or skill definition.** No in-container executable harness exists; the
 opt-in live-spawn stage (`agentic-fuzz.md`) is the only route that runs the
-definition for real, under its own consent. `fuzzer` writes a scenario table crossing each payload class from
+definition for real, under its own consent. `sabot-fuzzer` writes a scenario table crossing each payload class from
 `references/corpora/prompt-injection.md` against each entry point where untrusted
 content enters, and `gremlin` evaluates whether the definition contains a rule
 that stops it.

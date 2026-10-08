@@ -20,8 +20,8 @@ version-to-version state file.
 | Tool | Tier | Class | Run recipe | Catches | Overlap |
 |------|------|-------|-----------|---------|---------|
 | `scripts/fuzz-cli.py` | default-on | local | see `harnesses.md` | crash, hang, non-parsable output, contract violation on any CLI or JSON-stdin program | the workhorse of this surface |
-| hypothesis | default-on | local | `pytest --hypothesis-show-statistics` on the property tests `fuzzer` wrote | Python: invariant violations across generated inputs | property testing finds classes a fixed corpus never reaches |
-| proptest or quickcheck | default-on | local | `cargo test` on the property tests `fuzzer` wrote | Rust: same | native to the language |
+| hypothesis | default-on | local | `pytest --hypothesis-show-statistics` on the property tests `sabot-fuzzer` wrote | Python: invariant violations across generated inputs | property testing finds classes a fixed corpus never reaches |
+| proptest or quickcheck | default-on | local | `cargo test` on the property tests `sabot-fuzzer` wrote | Rust: same | native to the language |
 | fast-check | default-on | local | `npx vitest run` on the property tests | JS/TS: same | native |
 | `go test -fuzz` | default-on | local | `go test -fuzz=Fuzz -fuzztime=<budget>` | Go: crashers plus corpus growth | native, and the corpus persists in testdata |
 | schemathesis | opt-in | local | `schemathesis run --dry-run <spec>` | API contract violations generated from an OpenAPI spec, off unless a spec exists | requires a local instance to run for real, so dry-run only |
@@ -56,7 +56,7 @@ MUST Distinguish a hang from a crash in every report row, since the remediation 
 
 ## Harness patterns
 
-Both shapes below are authored by `fuzzer` and executed by `gremlin`.
+Both shapes below are authored by `sabot-fuzzer` and executed by `gremlin`.
 
 **Property tests** assert an invariant across generated inputs. Best invariants,
 in yield order: round-trip (`parse(render(x)) == x`), never-panic on arbitrary

@@ -62,7 +62,7 @@ that parser goes through `scripts/fuzz-cli.py`, since a crash on malformed confi
 is a startup denial.
 
 **Policy assertion.** When the repo ships Rego or custom scanner policies,
-`fuzzer` writes fixtures that should fail each policy, and `gremlin` confirms the
+`sabot-fuzzer` writes fixtures that should fail each policy, and `gremlin` confirms the
 policy actually rejects them. A policy that passes everything is a silent gap, and
 it looks identical to a compliant repo.
 

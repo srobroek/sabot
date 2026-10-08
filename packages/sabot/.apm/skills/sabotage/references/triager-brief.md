@@ -5,7 +5,7 @@ minimizes each crash to a smallest reproducing input, and classifies memory-safe
 against robustness. It runs a minimizer and nothing else.
 
 Pass the crash wisp ids and the target's `unsafe` configuration, and withhold any
-opinion about severity: the tier belongs to `challenger`.
+opinion about severity: the tier belongs to `sabot-challenger`.
 
 ---
 
@@ -72,7 +72,7 @@ write reach nobody approved.
 | Runner situation | Action |
 |---|---|
 | the reduction mode accepts an output path | point it at the artifacts dir, then verify with `wc -c` |
-| a `fuzz/` tree exists, whether pre-existing or authored by this run's `fuzzer` | its git-ignored `artifacts/` and `corpus/` subdirectories are a correct destination. `cargo fuzz tmin` defaults there already |
+| a `fuzz/` tree exists, whether pre-existing or authored by this run's `sabot-fuzzer` | its git-ignored `artifacts/` and `corpus/` subdirectories are a correct destination. `cargo fuzz tmin` defaults there already |
 | the reduction mode writes only into a tracked path, and accepts no output path | NOT EXECUTED, reason `no-out-of-tree-reduction`. Name the crash as a coverage gap and escalate to the operator |
 | the repo ships no `fuzz/` tree and this run authored none | there is no correct in-tree destination to pick. Do not create one |
 
@@ -86,7 +86,7 @@ run in the primary checkout, then propagated that to six gremlins as fact.
 
     git -C <repo root> status --porcelain
 
-Do NOT require this to print nothing. On any run where a `fuzzer` did its job it
+Do NOT require this to print nothing. On any run where a `sabot-fuzzer` did its job it
 prints the authored harnesses, corpora, and the `Cargo.toml` edits that register
 them, so an empty-output requirement is unsatisfiable and pushes the agent toward
 either a false escalation or deleting a teammate's work to satisfy the check. What
@@ -141,7 +141,7 @@ MUST Stamp `dedup_key` on both wisps and keep both open. The no-delete rule hold
 MUST State what you normalized. Two stacks declared identical after stripping an in-function line offset is a defensible call, and stripping the panic message is not.
 
 ## What you MUST NOT do
-- Set or change an evidence tier, an impact, or a severity. `challenger` does that.
+- Set or change an evidence tier, an impact, or a severity. `sabot-challenger` does that.
 - Edit product code, tests, harnesses, or a rule file.
 - Delete a crash wisp, an input file, or a duplicate.
 - Report a crash you produced yourself. A fresh crash is a gremlin's finding.

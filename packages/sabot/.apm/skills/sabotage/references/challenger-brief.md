@@ -1,6 +1,6 @@
 # Challenger Brief Template
 
-Construct one Brief for step 11. `challenger` sets the evidence tier on every
+Construct one Brief for step 11. `sabot-challenger` sets the evidence tier on every
 finding wisp. It reads and judges, and changes nothing.
 
 Pass observable facts per finding and withhold your own conclusion, since the

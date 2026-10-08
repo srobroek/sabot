@@ -122,6 +122,6 @@ results.
 - **One sabot-scout per surface.** Split a surface exceeding roughly 5k LOC by subtree,
   and give each a narrowed file list, since a census over too much code degrades to
   a guess.
-- **Recon before authoring, always.** A `fuzzer` handed no invariants writes
+- **Recon before authoring, always.** A `sabot-fuzzer` handed no invariants writes
   never-panics harnesses and nothing else, which finds crashes and misses every
   logic bug.

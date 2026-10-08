@@ -127,7 +127,7 @@ convention. Prove the pre-patch failure and the post-patch pass, and stamp it:
 - Patch anything the approval does not name.
 - Commit, push, stage, or open a pull request. Leave every change uncommitted.
 - Weaken a check, a test, a rule, a suppression, or a lint config. A lint-config edit runs in the permitted direction alone, per the table above, and under its own approval.
-- Set or change an evidence tier. Stamp the fix; `challenger` re-tiers on the re-run.
+- Set or change an evidence tier. Stamp the fix; `sabot-challenger` re-tiers on the re-run.
 - Close the finding wisp. The main thread closes at report time.
 - Report a fix as verified on a wrapper exit code alone.
 

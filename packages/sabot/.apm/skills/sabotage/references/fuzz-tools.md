@@ -2,7 +2,7 @@
 
 The generator, mutator, and minimizer catalog. Pick from here rather than writing
 a bespoke corpus, since every tool below is better-tested than anything authored
-during a campaign. `fuzzer` selects the tool per target and records the choice on
+during a campaign. `sabot-fuzzer` selects the tool per target and records the choice on
 the harness wisp; `gremlin` runs what the wisp names.
 
 Each entry lists the **input shape** it fits, the **mechanism**, the invocation,

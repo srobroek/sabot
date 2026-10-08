@@ -64,7 +64,7 @@ NOT Never run a build or install to observe it without the isolation below. Obse
 Mostly a reading surface, since building to observe is running the payload. Two
 executable checks, both isolated:
 
-- **Script census.** `fuzzer` lists every install/build script and what each
+- **Script census.** `sabot-fuzzer` lists every install/build script and what each
   invokes; `gremlin` runs `npm install --ignore-scripts` versus a scripted install
   in a throwaway container and diffs what changed.
 - **Building in a sandbox.** When a `build.rs` or proc macro must be run to judge it, run

@@ -1,7 +1,7 @@
 # Gremlin Brief Template
 
 Construct one Brief per surface node for step 8. `gremlin` executes scanners and
-the harnesses `fuzzer` wrote, then reads for what neither can see. It edits
+the harnesses `sabot-fuzzer` wrote, then reads for what neither can see. It edits
 nothing.
 
 Spawn the gremlins in parallel, one message with several Agent calls, one per

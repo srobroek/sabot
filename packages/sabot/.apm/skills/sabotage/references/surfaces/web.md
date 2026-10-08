@@ -68,7 +68,7 @@ NOT Never scan a staging, production, or shared URL, even one the user pastes. T
 **Static** doesn't need a server: run the eslint/opengrep/retire.js tools and trace DOM
 sinks by reading, exactly like `code.md`.
 
-**Dynamic** drives the running instance. `fuzzer` writes the scan config and, when
+**Dynamic** drives the running instance. `sabot-fuzzer` writes the scan config and, when
 DOM XSS needs render, a Playwright script that loads a page, injects a marker into
 each input, and asserts the marker never reaches `document` as script. `gremlin`
 starts the server, then runs the scan and tears it down per the section above.

@@ -1,6 +1,6 @@
 # Fuzzer Brief Template
 
-Construct one Brief per surface for step 7. `fuzzer` writes harnesses, corpora, and
+Construct one Brief per surface for step 7. `sabot-fuzzer` writes harnesses, corpora, and
 attack scenarios, and executes nothing. Pass facts only: the surface with its entry
 points and conventions, and the wisp to file against.
 
@@ -139,7 +139,7 @@ findings; finding them is the gremlin's job.
 
 - **One surface per fuzzer is the floor.** Split a surface exceeding roughly 5k
   LOC across several fuzzers by subtree or crate, each with a narrowed file list.
-- **Pass the entry points, not a hypothesis.** `fuzzer` decides which invariant
+- **Pass the entry points, not a hypothesis.** `sabot-fuzzer` decides which invariant
   fits each entry point; handing it your guess about which function is at fault narrows
   the search wrongly.
 - **State the convention explicitly.** A fuzzer that guesses the fuzz-target

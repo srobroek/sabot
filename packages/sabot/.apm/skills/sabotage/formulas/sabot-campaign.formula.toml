@@ -287,12 +287,12 @@ id = "author-harnesses"
 title = "step 7 author the attack plan {{run_id}}"
 type = "task"
 needs = ["closed-classes"]
-labels = ["sab-audit", "non-work", "agent:fuzzer"]
+labels = ["sab-audit", "non-work", "agent:sabot-fuzzer"]
 condition = "{{scope_mode}} != quick"
 description = """Step 7. Brief from references/fuzzer-brief.md; patterns in
 references/harnesses.md.
 
-Spawn `fuzzer` per surface to write harnesses, seed corpora, and attack scenarios for
+Spawn `sabot-fuzzer` per surface to write harnesses, seed corpora, and attack scenarios for
 every reachable entry point, mirroring the repo's own convention for where fuzz targets
 live. Each harness asserts an invariant recon discovered.
 
@@ -311,7 +311,7 @@ report the VERIFIED count rather than the intended one.
 
 [steps.metadata]
 skill_hints = "sabot:sabotage"
-execution_agent_type = "sabot:fuzzer"
+execution_agent_type = "sabot:sabot-fuzzer"
 
 [[steps]]
 id = "attack"
@@ -338,7 +338,7 @@ trust boundaries, authz logic, guard bypasses, prompt-injection paths, unbounded
 
 The gremlin edits nothing, including a harness it finds broken. A broken, absent, or
 self-reported-broken harness gets a re-author wisp stamped `supersedes`, routed back to
-`fuzzer`. That back-edge is prose and not a formula edge, because a DAG cannot express
+`sabot-fuzzer`. That back-edge is prose and not a formula edge, because a DAG cannot express
 it.
 
 An absent tool is skipped, warned about, and recorded with an install hint. PROBE before
@@ -428,11 +428,11 @@ type = "task"
 # both `bd cook` and `bd mol pour` reported success.
 # `live-spawn` files findings too, so tiering before it closes leaves its findings untiered.
 needs = ["triage", "closed-classes", "live-spawn"]
-labels = ["sab-audit", "non-work", "agent:challenger"]
+labels = ["sab-audit", "non-work", "agent:sabot-challenger"]
 condition = "{{scope_mode}} != quick"
 description = """Step 11. Brief from references/challenger-brief.md.
 
-`challenger` claims the finding wisps and sets each evidence tier: PROVEN, REACHABLE,
+`sabot-challenger` claims the finding wisps and sets each evidence tier: PROVEN, REACHABLE,
 HARDENING, or REFUTED. Read-only diagnostics only.
 
 REFUSE to tier a finding from a resource-limited run, and refuse where the benign
@@ -455,7 +455,7 @@ deleted."""
 
 [steps.metadata]
 skill_hints = "sabot:sabotage"
-execution_agent_type = "sabot:challenger"
+execution_agent_type = "sabot:sabot-challenger"
 
 [[steps]]
 id = "synthesize"

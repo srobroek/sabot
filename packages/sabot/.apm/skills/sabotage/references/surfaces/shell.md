@@ -76,7 +76,7 @@ these invariants and reports a violation as a finding:
 | Exit code matches the documented contract | a caller misreading the result |
 
 Seed the corpus with the target's own test fixtures, then add the wrapper and
-quoting mutations from the checklist. `fuzzer` writes the attack-vector list;
+quoting mutations from the checklist. `sabot-fuzzer` writes the attack-vector list;
 `gremlin` runs it.
 
 ## Impact calibration

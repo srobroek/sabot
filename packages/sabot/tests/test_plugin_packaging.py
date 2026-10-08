@@ -27,7 +27,12 @@ PKG = Path(__file__).resolve().parents[1]
 CLAUDE_MANIFEST = json.loads((PKG / ".claude-plugin/plugin.json").read_text())
 NATIVE_AGENTS = sorted((PKG / "agents").glob("*.md"))
 APM_AGENTS = sorted((PKG / ".apm/agents").glob("*.agent.md"))
-AGENT_NAMES = {"sabot-scout", "fuzzer", "gremlin", "triager", "challenger", "hardener"}
+AGENT_NAMES = {"sabot-scout", "sabot-fuzzer", "gremlin", "triager", "sabot-challenger", "hardener"}
+AGENT_MODELS = PKG / ".apm/agent-models.yml"
+
+# Tool names that let an agent change files. OMP lower-cases a frontmatter tool name
+# before matching it, so Claude's `Edit` and OMP's `edit` are one entry each.
+WRITE_TOOLS = {"edit", "write", "multiedit", "notebookedit", "ast_edit"}
 
 # Claude Code refuses these on a plugin-shipped agent; each grants authority the
 # installing user never reviewed.
@@ -38,6 +43,27 @@ def _frontmatter(path: Path) -> str:
     text = path.read_text()
     assert text.startswith("---\n"), f"{path.name} has no frontmatter"
     return text[4 : text.index("\n---", 4)]
+
+
+def _fields(path: Path) -> dict[str, str]:
+    """Top-level `key: value` frontmatter fields, enough for the scalar keys here."""
+    out = {}
+    for line in _frontmatter(path).splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key and not key.startswith((" ", "\t")):
+            out[key.strip()] = value.strip()
+    return out
+
+
+def _codex_efforts() -> dict[str, str]:
+    """agent name -> codex reasoning_effort from agent-models.yml, without PyYAML."""
+    efforts, agent = {}, None
+    for line in AGENT_MODELS.read_text().splitlines():
+        if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(":"):
+            agent = line.strip()[:-1]
+        elif line.strip().startswith("reasoning_effort:") and agent:
+            efforts[agent] = line.split(":", 1)[1].strip()
+    return efforts
 
 
 def test_every_agent_is_materialised_natively():
@@ -132,3 +158,47 @@ def test_every_shipped_script_with_a_shebang_is_executable():
         and not p.stat().st_mode & 0o111
     ]
     assert not bad, f"shebang present but not executable: {bad}"
+
+
+def test_no_agent_sets_effort_without_thinking_level():
+    """`effort` is a Claude Code key that OMP does not parse; OMP reads
+    `thinking-level`. Every agent once carried `effort: low` alone, so on OMP the
+    deepest roles ran at the session default while Codex ran them at xhigh."""
+    bad = [
+        p.name for p in APM_AGENTS + NATIVE_AGENTS
+        if "effort" in _fields(p) and "thinking-level" not in _fields(p)
+    ]
+    assert not bad, f"effort-only frontmatter, ignored by OMP: {bad}"
+
+
+def test_thinking_level_and_effort_match_the_codex_map():
+    """One role, one depth: Claude `effort`, OMP `thinking-level`, and the Codex
+    `reasoning_effort` in agent-models.yml must agree, or a runtime switch silently
+    changes how hard each agent thinks."""
+    efforts = _codex_efforts()
+    assert set(efforts) == AGENT_NAMES, "agent-models.yml must map exactly the six agents"
+    for path in APM_AGENTS + NATIVE_AGENTS:
+        fields = _fields(path)
+        want = efforts[fields["name"]]
+        assert fields.get("thinking-level") == want, \
+            f"{path.name}: thinking-level {fields.get('thinking-level')!r} != codex {want!r}"
+        if "effort" in fields:
+            assert fields["effort"] == want, \
+                f"{path.name}: effort {fields['effort']!r} != codex {want!r}"
+
+
+def test_challenger_is_read_only_in_every_runtime():
+    """The challenger is the read-only critic, yet its source carried
+    `permissionMode: acceptEdits` and no tool list, so nothing but prose kept it from
+    editing. A `tools` allowlist binds in both Claude Code and OMP (which lower-cases
+    `Read`/`Bash` onto its own names); it must carry no write-capable tool, and the
+    source must not grant edits."""
+    for path in (PKG / ".apm/agents/sabot-challenger.agent.md", PKG / "agents/sabot-challenger.md"):
+        fields = _fields(path)
+        assert "permissionMode" not in fields, f"{path.name} still grants edits"
+        raw = fields.get("tools", "")
+        assert raw.startswith("[") and raw.endswith("]"), \
+            f"{path.name} needs an explicit tools allowlist, got {raw!r}"
+        tools = {t.strip().lower() for t in raw[1:-1].split(",") if t.strip()}
+        assert {"read", "grep", "glob", "bash"} <= tools, f"{path.name}: {sorted(tools)}"
+        assert not tools & WRITE_TOOLS, f"{path.name} carries write tools {sorted(tools & WRITE_TOOLS)}"

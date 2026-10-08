@@ -2,7 +2,7 @@
 
 The executable half of the agents surface. `promptfoo redteam` generates attacks
 from a plugin taxonomy and grades whether the target script's response to each
-crossed a boundary. `fuzzer` writes the config and the target
+crossed a boundary. `sabot-fuzzer` writes the config and the target
 script; `gremlin` runs the eval. The existing write and execute split holds, since
 promptfoo is one more executable in a run recipe.
 
@@ -13,8 +13,8 @@ or agent, so a failure names a defect in this repo rather than in a model.
 
 | Part | Needs a model | Owner |
 |---|---|---|
-| Generate cases from plugins | yes, once per campaign | `fuzzer` |
-| Target script under attack | no | `fuzzer` writes it, `gremlin` runs it |
+| Generate cases from plugins | yes, once per campaign | `sabot-fuzzer` |
+| Target script under attack | no | `sabot-fuzzer` writes it, `gremlin` runs it |
 | Grade the target's response | yes, per case | `gremlin` |
 
 MUST Gate generation and grading before the first call, since both spend tokens. Declare the plugin set, the case count, and the grader, then wait. Measured reference: 3 cases generated plus graded cost 3,296 tokens and 4 seconds wall-clock.
@@ -95,7 +95,7 @@ NOT Never claim multi-turn coverage from a single-turn run. The slow-ramp classe
 
 ## Config shape
 
-`fuzzer` writes this into the artifacts dir, never the repo root:
+`sabot-fuzzer` writes this into the artifacts dir, never the repo root:
 
 ```yaml
 targets:
@@ -127,7 +127,7 @@ MUST Write the config, the target script, and the generated cases into the artif
 ## Run recipe
 
 ```
-# fuzzer: author only, no execution
+# sabot-fuzzer: author only, no execution
 npx --yes promptfoo@latest redteam generate --config <artifacts>/promptfooconfig.yaml \
     --output <artifacts>/rt-<surface>.yaml
 
