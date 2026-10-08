@@ -17,7 +17,7 @@ path by hand.
 | `<run-root>/ephemeral/<node-slug>/cache/` | ephemeral | tool caches | one node |
 | `<run-root>/ephemeral/<node-slug>/corpora/` | ephemeral | regenerable from `references/corpora/` | one node |
 | `<run-root>/ephemeral/<node-slug>/src/` | ephemeral | copied source tree | one node |
-| `~/.sabot-scratch/<run-id>/` | ephemeral | host-side scratch outside the repo | orchestrator |
+| `~/.sabot-scratch/<repo>-<run-id>-<hash>/` | ephemeral | host-side scratch outside the repo, keyed by repo and run id so two repos' `run-1` never share one | orchestrator |
 
 Durability is readable from the path. Exactly one segment decides it: anything under
 `ephemeral/` is regenerable, everything else under the run root is evidence.
@@ -102,16 +102,21 @@ target dir, and that growth filled the host volume.
 
 `classify-failure.py` gives every caller the same verdict on a failed run. A SIGKILL during
 linking, an OOM message, `No space left on device`, or a container-store
-`input/output error` is an INVALID run, not a target defect and not a finding.
+`input/output error` is an INVALID run, not a target defect and not a finding. A memory
+verdict walks the retry ladder below by `--attempt`, which counts this node's failed runs
+with the one being classified included: attempt 1 degrades the recipe at the same cap,
+attempt 2 is the one raise, and attempt 3 or later stops and reports.
 
 ### The pool is one VM, and concurrency is arithmetic
 
 Every container's `--memory` cap is drawn from one runtime pool. Measured on the reference
 host: `colima list` and `docker info` agree at **8 GiB RAM, 4 vCPU, 60 GiB disk**, while the
 machine underneath is far larger. `run-preflight.py` therefore reads `MemTotal` and `NCPU`
-from the runtime and marks `memory.measured_from_runtime`; a figure that came from `sysctl`
-instead clamps `max_parallel_nodes` to 1, because an unconfirmed pool is not an unlimited
-one.
+from the runtime and marks `memory.measured_from_runtime`. When the runtime cannot report
+them, the pool is UNKNOWN: `usable_mb` is null, `target_fits_memory` fails, and the
+preflight exits 3 rather than planning against the laptop's memory, because an
+unconfirmed pool is not an unlimited one. `admit-node.py` refuses any record whose pool
+was not measured from the runtime.
 
     max_parallel_nodes = floor(memory.usable_mb / estimate.per_node_mem_mb)
 
@@ -122,9 +127,10 @@ past that line does not run slower. The kernel OOM-kills a container, and the ki
 container reports zero findings instead of reporting that it died.
 
 `admit-node.py --preflight preflight.json --mem-cap MB --running-cap MB ...` enforces it and
-exits 3 when the running sum would exceed the pool. It is the first consumer of
-`preflight.json`. Lowering a cap to squeeze a node in is not the workaround; a node capped
-below what it needs is the OOM.
+exits 3 when the running sum would exceed the pool. Pass one `--running-cap` per running
+node: a summed figure would lose the node count that divides the CPUs into `jobs`, so the
+script takes no sum. It is the first consumer of `preflight.json`. Lowering a cap to
+squeeze a node in is not the workaround; a node capped below what it needs is the OOM.
 
 `jobs` is derived the same way: `min(requested, floor(NCPU / concurrent_nodes))`, floor 1.
 `-j 4` against 4 vCPUs with three containers competing is oversubscription, and two nodes

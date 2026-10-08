@@ -4,8 +4,8 @@ Construct one Brief per surface for step 5. `sabot-scout` derives this repo's ow
 threat model. Pass facts only, and no hypothesis about where the bugs are, since a
 sabot-scout told what to look for stops looking.
 
-Spawn the sabot-scouts in parallel, one message with several Agent calls, one per
-detected surface.
+Spawn the sabot-scouts in parallel in one batch (several Agent calls in one message
+in Claude Code, one `task` call with several tasks in OMP), one per detected surface.
 
 ---
 
@@ -15,7 +15,7 @@ this codebase assumes about itself and turn each assumption into something testa
 You find no vulnerabilities.
 
 ## Scope
-- Surface: <code | shell | agents | infra | robustness>
+- Surface: <code | shell | agents | infra | web | build | robustness>
 - Files: <explicit resolved paths for this surface>
 - Working directory: <repo root, or the worktree path for a ref target>
 - Exclude: <generated, vendored, fixtures>
@@ -61,8 +61,8 @@ its checklist as a floor rather than your output.
    count, and the deviation loci.
 5. Repo-specific semgrep or ast-grep rules for the invariants and deviations no
    standard pack covers, each one PROVEN per the section below before you hand it
-   forward. Write each at the repo's own lint-config convention when it has one, so a
-   confirmed rule can graduate into CI.
+   forward. Write each into the artifacts dir and record the repo's lint-config path it
+   would graduate to, so a confirmed rule can graduate into CI at the step-15 approval.
 6. A pack-aiming decision: packs to run with exact invocations, and packs left off
    with reasons.
 7. An agentic-code scan: signature-detect whether the application itself is agentic
@@ -122,6 +122,6 @@ results.
 - **One sabot-scout per surface.** Split a surface exceeding roughly 5k LOC by subtree,
   and give each a narrowed file list, since a census over too much code degrades to
   a guess.
-- **Recon before authoring, always.** A `fuzzer` handed no invariants writes
+- **Recon before authoring, always.** A `sabot-fuzzer` handed no invariants writes
   never-panics harnesses and nothing else, which finds crashes and misses every
   logic bug.

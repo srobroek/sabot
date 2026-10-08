@@ -5,7 +5,7 @@ description: Attack code, scripts, hooks, or agents for vulns and robustness bug
 
 # Sabot
 
-Attack a target across five surfaces, prove each finding with a traced path or a
+Attack a target across seven surfaces, prove each finding with a traced path or a
 reproducing input, and report on two axes: evidence and impact. Product code stays
 untouched until step 15, which requires explicit approval; harnesses and regression
 tests are written freely.
@@ -63,9 +63,12 @@ non-interactive run then takes the defaults below and records each as a gap.
    here; a detected surface the user does not want scanned can be dropped. This is
    one message with question 3, not a separate prompt.
 3. **Which tools, and what fuzz budget?** Run
-   `<skill-dir>/scripts/install-tools.sh --probe` (a host preflight: confirms the
-   container runtime, `bd`, and `git`, and which surface images exist; it does not
-   install scanners on the host, which now run in the image). In one message, propose
+   `<skill-dir>/scripts/install-tools.sh --probe --images <images>`, naming the
+   `sabot/<name>:1` images this campaign uses (the detected language stacks, such as
+   `rust,node`, or `base` alone). Without `--images` every language image is required.
+   It is a host preflight: it confirms the container runtime, `bd`, and `git`, and
+   asserts each named image's tools; it does not install scanners on the host, which
+   now run in the image. In one message, propose
    the full thorough tool set per detected surface as a tiered table (default-on
    pre-selected ON, opt-in shown OFF with a reason) together with a fuzz budget
    table covering wall-clock per harness, parallel jobs, and memory cap. Then wait
@@ -103,22 +106,21 @@ reference every shipped asset by an absolute path beneath it. A skill-relative
 path silently matches nothing, and a run that matched nothing looks clean.
 
 **When these agent types are unavailable, DIAGNOSE THE INSTALL FIRST.** The package
-ships `sabot-scout`, `fuzzer`, `gremlin`, `triager`, `challenger`, and `hardener` under
-`.apm/agents/`, materialised to `agents/*.md` for Claude and deployed by
-`apm install` or `claude plugin install`. Absent types are almost always a broken or
-missing install rather than a runtime that cannot load them, so before falling back:
+ships `sabot-scout`, `sabot-fuzzer`, `gremlin`, `triager`, `sabot-challenger`, and
+`hardener` under `.apm/agents/`, materialised to `agents/*.md` and deployed by
+`apm install`, `claude plugin install`, or `omp plugin install`. Absent types are
+almost always a broken or missing install rather than a runtime that cannot load
+them, so before falling back, run the checks for the runtime you are in:
 
-1. Confirm the plugin is installed AND enabled (`claude plugin list`). An install
-   that succeeded can still refuse to enable on an unresolvable dependency.
-2. Run `claude plugin validate --strict <package-dir>`. A manifest error fails the
-   whole plugin, so the skill may be reachable while the agents are not.
-3. Check the agent frontmatter. Claude Code drops a plugin-shipped agent that
-   declares `permissionMode`, `hooks`, or `mcpServers`.
-4. Install or repair, then note that the registry is snapshotted at session start:
-   a freshly installed type needs a new session before it can be spawned.
+| Check | Claude Code | OMP |
+|---|---|---|
+| 1. installed and enabled | `claude plugin list`. An install that succeeded can still refuse to enable on an unresolvable dependency | `omp plugin list` names `sabot@sabot`, and `omp plugin doctor` reports nothing against it |
+| 2. the loader reaches the agents | `claude plugin validate --strict <package-dir>`. A manifest error fails the whole plugin, so the skill may be reachable while the agents are not | `omp config get disabledProviders --json` must not list `claude-plugins`, because OMP loads a marketplace plugin's `agents/` through that provider |
+| 3. the frontmatter parses | Claude Code drops a plugin-shipped agent that declares `permissionMode`, `hooks`, or `mcpServers` | OMP needs `name` and `description`, reads `thinking-level` and `tools`, and ignores a Claude-dialect plugin's `model` |
+| 4. the registry is fresh | the registry is snapshotted at session start, so a freshly installed type needs a new session | the same: start a new session after installing |
 
-Fall back to a generic agent (`general-purpose`, or the runtime's default) with the
-SAME Brief ONLY once those four have been checked and the types are still absent,
+Fall back to a generic agent (`general-purpose` in Claude Code, `task` in OMP) with
+the SAME Brief ONLY once those four have been checked and the types are still absent,
 since every Brief in `references/*-brief.md` is self-contained and names its own
 return format. The agent definition sharpens the role; the Brief specifies the work.
 Then record BOTH "ran with generic agents" AND the install-diagnosis result as gaps,
@@ -133,10 +135,10 @@ neither judges its own output.
 | Agent | Writes | Executes | Judges |
 |-------|--------|----------|--------|
 | `sabot-scout` | recon artifacts, repo-specific rules | read-only queries | nothing |
-| `fuzzer` | harnesses, corpora, attack scenarios | nothing | nothing |
-| `gremlin` | nothing | scanners and harnesses, per surface | nothing |
+| `sabot-fuzzer` | harnesses, corpora, attack scenarios | nothing | nothing |
+| `gremlin` | ledger wisps only | scanners and harnesses, per surface | nothing |
 | `triager` | crash records | minimizer only | crash class |
-| `challenger` | nothing | read-only diagnostics | evidence tier |
+| `sabot-challenger` | ledger stamps only | read-only diagnostics | evidence tier |
 | `hardener` | product patches | verification re-run | nothing |
 
 ## Workflow
@@ -159,7 +161,8 @@ step rendered as a sub-bullet was silently skipped on one live run.
    boundary an agent can enumerate, cover, and read inside the cap, stamp
    `coverage_ratio` on each, and decide the node count together with the
    concurrent-container ceiling.
-3. **Probe, propose tools and budget, then wait** (blocking, interactive runs).
+3. **Probe, propose tools and budget, wait, then provision only after approval**
+   (blocking, interactive runs).
    See `references/tooling.md` with `references/installer.md`.
 4. **Repo-global pre-pass.** Delegate to one spawned agent: run every whole-tree
    scanner (deps, secrets), the union of cross-surface scanner invocations, the
@@ -180,7 +183,7 @@ step rendered as a sub-bullet was silently skipped on one live run.
    can make a whole vulnerability class unreachable here. Census each closed class
    with its counts, re-aim the campaign onto the classes that remain, and keep the
    closed class in the report. See `references/workflow.md`.
-7. **Author the attack plan.** Spawn `fuzzer` per surface to write harnesses,
+7. **Author the attack plan.** Spawn `sabot-fuzzer` per surface to write harnesses,
    seed corpora, and attack scenarios for every reachable entry point, mirroring
    the repo's own convention for where fuzz targets live. Scripts, hooks, and CLIs
    get the shipped `scripts/fuzz-cli.py`; agents and skills get
@@ -206,7 +209,7 @@ step rendered as a sub-bullet was silently skipped on one live run.
     claims each batch, dedups by stack, minimizes to a smallest reproducing input,
     and separates memory-safety from robustness. Brief from
     `references/triager-brief.md`.
-11. **Prove or refute.** `challenger` claims the finding wisps and sets each
+11. **Prove or refute.** `sabot-challenger` claims the finding wisps and sets each
     evidence tier, Briefed from `references/challenger-brief.md`. A refuted finding
     is recorded as REFUTED alongside the refutation. Findings sharing a `root_cause`
     are grouped, tiered once, and reported with an instance count.
@@ -251,9 +254,9 @@ MUST Record a finding as structured wisp metadata per the schema in `references/
 MUST Run every target-touching tool (scanners, fuzzing, DAST, build-script execution) in a container per `references/isolation.md`, never on the host. When no container runtime is present, ABORT the whole run loudly at step 0 with a non-zero exit; do not fall back to the host and do not run a static-only subset.
 MUST Abort the run loudly when `bd` is absent (`references/beads-store.md`). The container runtime and `bd` are hard preconditions, not degradable ones.
 MUST Never author an input whose effect is irreversible even inside the container. Fuzz the code path that receives `rm -rf` while leaving the command itself unexecuted. See `references/isolation.md`.
-MUST Keep every finding. A challenger-refuted finding is reported as REFUTED with its reason, and a finding with no traced path is reported as HARDENING.
+MUST Keep every finding. A finding `sabot-challenger` refuted is reported as REFUTED with its reason, and a finding with no traced path is reported as HARDENING.
 MUST Carry both axes plus a `file:line` on every finding: the evidence tier (PROVEN|REACHABLE|HARDENING|REFUTED) and the impact (CRITICAL|HIGH|MEDIUM|LOW).
-MUST Keep the write and execute roles apart. `fuzzer` never runs a harness it wrote, and `gremlin` never edits one it runs, because an agent that grades its own output hides its own bugs.
+MUST Keep the write and execute roles apart. `sabot-fuzzer` never runs a harness it wrote, and `gremlin` never edits one it runs, because an agent that grades its own output hides its own bugs.
 MUST Leave product code untouched in steps 1 to 14. The authoring step (7), the attack step (8), the live-spawn step (9), and the triage step (10) may only write harness files, corpora, and tests; `hardener` patches in step 15 on explicit approval, behind a verification re-run.
 MUST Leave every written artifact uncommitted and list it in the report, since committing is the user's call.
 MUST Ask which tracker and which access method, and confirm the destination by listing it, before creating any ticket. Never infer the tracker from the git remote. A GitHub remote is not evidence that GitHub Issues is the destination, and a finding filed on a public mirror is a disclosure the user never authorized.
@@ -262,7 +265,7 @@ MUST Prove a hardened finding gone by re-running that finding's own recorded `re
 MUST Treat robustness findings as first-class: a crash on malformed input with no attacker path is a real finding, tiered by impact.
 MUST Detect with real tools from `references/tooling.md` and `references/fuzz-tools.md`. A regex grep is no substitute for a scanner, a hand-written corpus is no substitute for a generator, and a missing tool becomes a reported coverage gap.
 MUST Aim the standard rulesets with recon rather than running them unaimed. Stock packs are the borrowed detectors, and the harness around them is derived per repo, so a campaign whose findings all came from stock packs skipped recon, and the report says so.
-MUST Graduate every rule behind a confirmed finding into the repo's own lint config, since the regression test guards that one instance and only the rule guards the next.
+MUST Propose every rule behind a confirmed finding for graduation into the repo's own lint config at the step-15 approval, and write it there only when that approval covers it. The regression test guards that one instance and only the rule guards the next, but the lint config is product configuration, which steps 1 to 14 leave untouched and the `report only` route leaves as a proposal in the report.
 MUST Route every handoff through a bead or wisp per `references/beads-store.md`. A finding that exists only in an agent's reply dies with the session.
 MUST Label every campaign bead `sab-audit`, and every non-defect record `non-work` as well, so the project whose store this is can exclude an audit's records from its own backlog and release gates. A campaign that leaves its bookkeeping indistinguishable from the project's work blocks the project's own gates on it.
 MUST Set every finding's priority from the tier-impact table in `references/beads-store.md`, and close a REFUTED finding with reason `refuted` while keeping its wisp and refutation. A uniform priority orders nothing, and a disproved finding left open reads as outstanding work forever.
@@ -273,7 +276,7 @@ NOT Raw scanner output is HARDENING until a path or repro is traced, so do not r
 
 ## Scope modes
 
-- **quick**: steps 0 to 8, skipping the authoring step (7) in favour of a smoke campaign over existing harnesses, and skipping the challenger (11).
+- **quick**: steps 0 to 8, skipping the authoring step (7) in favour of a smoke campaign over existing harnesses, and skipping `sabot-challenger` (11).
 - **full** (default): every step.
 - **audit-only**: steps 0 to 14 that describe findings without fixing them. Regression tests that reproduce a PROVEN finding are still written, since a test describes the bug; only the product-code change is withheld. The `ticket` remediation route is compatible with this mode and `harden` is not, because a ticket describes the work while a patch performs it.
 - **harness-only**: steps 0 to 7: author harnesses and corpora, execute nothing.
@@ -293,7 +296,7 @@ NOT Raw scanner output is HARDENING until a path or repro is traced, so do not r
 | `references/surfaces/<surface>.md` | Steps 7 to 10: per-surface attacks and tools |
 | `references/tooling.md` | Steps 3 to 8: scanner catalog, invocation, overlap, class |
 | `references/installer.md` | Step 3: install-flow contract and bundles |
-| `references/fuzzer-brief.md` | Step 7: build each `fuzzer` Brief |
+| `references/fuzzer-brief.md` | Step 7: build each `sabot-fuzzer` Brief |
 | `references/harnesses.md` | Step 7: harness patterns per target kind |
 | `references/gremlin-brief.md` | Step 8: build each `gremlin` Brief |
 | `references/fuzz-tools.md` | Steps 7 to 10: generator, mutator, minimizer, and coverage catalog |
@@ -302,7 +305,7 @@ NOT Raw scanner output is HARDENING until a path or repro is traced, so do not r
 | `references/corpora/prompt-injection.md` | Steps 7 to 9: agent-surface payloads |
 | `references/agentic-fuzz.md` | Steps 7 to 9: generated attacks against a hook, skill, or agent |
 | `references/triager-brief.md` | Step 10: build the `triager` Brief |
-| `references/challenger-brief.md` | Step 11: build the `challenger` Brief |
+| `references/challenger-brief.md` | Step 11: build the `sabot-challenger` Brief |
 | `references/network-stage.md` | Step 13: the egress-only lookups, and secret-verification consent |
 | `references/report-template.md` | Step 14: two-axis report format |
 | `references/remediation.md` | Step 15: route selection, tracker access, ticket schema, verification |
@@ -313,8 +316,8 @@ NOT Raw scanner output is HARDENING until a path or repro is traced, so do not r
 | Agent | Role | Spawned |
 |-------|------|---------|
 | `sabot-scout` | Read-only recon: trust map, invariants, idiom census, repo-specific rules | Step 5, one per surface, parallel |
-| `fuzzer` | Authors harnesses, corpora, and vectors from recon's invariants; runs nothing | Step 7, one per surface, parallel |
+| `sabot-fuzzer` | Authors harnesses, corpora, and vectors from recon's invariants; runs nothing | Step 7, one per surface, parallel |
 | `gremlin` | Executes scanners, synthesized rules, and harnesses per surface, and reads for what they miss | Step 8, one per surface node, parallel |
 | `triager` | Dedups, minimizes, and classifies crashes | Step 10, once per crash batch |
-| `challenger` | Read-only exploitability critic; sets the evidence tier | Step 11, once over the finding wisps |
+| `sabot-challenger` | Read-only exploitability critic; sets the evidence tier | Step 11, once over the finding wisps |
 | `hardener` | Applies approved patches and re-verifies | Step 15, only after explicit approval |

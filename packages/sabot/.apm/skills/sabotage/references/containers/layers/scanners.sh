@@ -173,7 +173,10 @@ grep -q "CKV_AWS" "$probe/checkov.txt" || {
 }
 
 # Bearer: prove the BAKED rules load, by pointing it at them explicitly and requiring a
-# finding on a seeded hardcoded secret. Without --external-rule-dir it reports a clean.
+# rule-specific finding on a seeded weak hash. Without --external-rule-dir it reports a
+# clean. A non-empty file is not that proof: an empty `{}` report or an error log passes
+# `test -s`, so the report is parsed and must carry python_lang_weak_hash_md5, and with
+# --exit-code 0 any non-zero exit is an error rather than a finding.
 mkdir -p "$probe/app"
 cat >"$probe/app/db.py" <<'EOF'
 import hashlib
@@ -184,19 +187,47 @@ PASSWORD = "hunter2-not-a-real-secret"
 def weak(x):
     return hashlib.md5(x).hexdigest()
 EOF
+rc=0
 bearer scan "$probe/app" --external-rule-dir /opt/sabot-db/bearer-rules \
-	--format json --output "$probe/bearer.json" --exit-code 0 >/dev/null 2>&1 || true
-test -s "$probe/bearer.json" || {
-	echo "sabot scanners: bearer produced no report against the baked rules" >&2
+	--format json --output "$probe/bearer.json" --exit-code 0 >"$probe/bearer.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] && python3 - "$probe/bearer.json" <<'EOF' || {
+import json, sys
+report = json.load(open(sys.argv[1]))
+ids = {f.get("id") for findings in report.values() if isinstance(findings, list)
+       for f in findings if isinstance(f, dict)}
+sys.exit(0 if "python_lang_weak_hash_md5" in ids else f"bearer rule ids: {sorted(map(str, ids))}")
+EOF
+	echo "sabot scanners: bearer (rc=$rc) did not report python_lang_weak_hash_md5 against the baked rules" >&2
+	cat "$probe/bearer.log" >&2
 	exit 1
 }
 
 # Kingfisher: detection only. --no-validate is not optional here; the default path opens
 # outbound connections to validate each candidate, and offline that turns every real hit
 # into a validation error.
-kingfisher scan "$probe/app" --no-validate --format json >"$probe/kf.json" 2>&1 || true
+#
+# Its output used to be discarded. Now it must find a seeded AWS key pair: exit 200 is
+# "findings discovered" (0 is none, anything else an error), and the report must name an
+# aws rule. The pair is generated here, never committed, because textbook keys are
+# allowlisted and a credential-shaped literal in the repo trips its own secret scan
+# (tool-coverage-matrix.md, "Seeding a secrets fixture"). Measured: kingfisher reports
+# `kingfisher.aws.2` on an AKIA id with a 40-character secret.
+python3 - "$probe/app/credentials" <<'EOF'
+import secrets, string, sys
+key_id = "AKIA" + "".join(secrets.choice(string.ascii_uppercase + "234567") for _ in range(16))
+secret = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(40))
+open(sys.argv[1], "w").write(
+    f"[default]\naws_access_key_id = {key_id}\naws_secret_access_key = {secret}\n")
+EOF
+rc=0
+kingfisher scan "$probe/app" --no-validate --format json >"$probe/kf.json" 2>"$probe/kf.log" || rc=$?
+[ "$rc" -eq 200 ] && grep -q '"kingfisher\.aws\.' "$probe/kf.json" || {
+	echo "sabot scanners: kingfisher (rc=$rc) did not report the seeded AWS key" >&2
+	cat "$probe/kf.log" >&2
+	exit 1
+}
 
-echo "scanners: $tmpl_count nuclei templates, $rule_count bearer rules; checkov + bearer + kingfisher all report on the probe"
+echo "scanners: $tmpl_count nuclei templates, $rule_count bearer rules; checkov, bearer and kingfisher each reported their seeded finding"
 rm -rf "${probe:?}"
 
 chmod -R a+rX /opt/sabot-db /opt/pipx

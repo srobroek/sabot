@@ -17,9 +17,10 @@
 #   IDENTITY  -- `command -v <tool>` resolves, and the first line of `<tool> --version`
 #     names the tool. A substituted binary answers with its own name, which is what makes
 #     the rewrite visible. `go --version` exits 2, so `<tool> version` is tried too.
-#   POSITIVE WORK -- the output reports a non-zero count of units and at least one named
-#     unit. `running 0 tests`, `0 tests selected`, and an empty selection are failures,
-#     not clean results.
+#   POSITIVE WORK -- the output reports a non-zero count of tests that FINISHED and at
+#     least one named unit. `running 0 tests`, `0 tests selected`, and an empty selection
+#     are failures, not clean results. A collected, skipped, or deselected test is not
+#     work.
 #
 # The command's output is written to a FILE and its status read from `$?`. It is never
 # piped into `tee`: a pipeline reports the status of its LAST stage, so `cmd | tee log`
@@ -118,22 +119,51 @@ else
   cat "$LOG"
 fi
 
-# POSITIVE WORK. Counted per stack rather than by one pattern, because each runner spells
-# it differently and a missing count must not read as zero-but-fine.
-#   rust  `running N tests`                        summed
+# POSITIVE WORK. A unit is a test that finished -- passed or failed. Skipped, ignored,
+# deselected, and merely collected tests are not work. Each runner's tests are counted from
+# ONE source, so a test that prints both a start line and a result line counts once:
+#   rust    per target (`running N tests` opens one): its `test result: ... N passed;
+#           M failed` summary, else its `test x ... ok|FAILED` lines
 #   nextest `Summary [...] N tests run`
-#   go    `--- PASS:` / `--- FAIL:`                counted
-#   pytest `collected N items`
+#   go      `--- PASS:` / `--- FAIL:` result lines, subtests included. `=== RUN` is a start.
+#   pytest  the closing `N passed, M failed ... in Xs` summary, else the per-test results:
+#           `file::test PASSED` (-v) or the `file.py ..F.` progress characters (default)
+# A runner that started tests and died before reporting any result (`running N tests` or
+# `=== RUN` with no result line after it) counts what it started. That is work followed by
+# a failure, for classify-failure.py, not a run that never happened.
 UNITS="$(awk '
-  /^running [0-9]+ test/            { s += $2 }
-  /[0-9]+ tests? run/               { for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+$/ && $(i+1) ~ /^tests?$/) s += $i }
-  /^(=== RUN|--- PASS:|--- FAIL:)/  { s += 1 }
-  /collected [0-9]+ item/           { for (i=1;i<=NF;i++) if ($i == "collected") s += $(i+1) }
-  END { print s + 0 }
+  function executed(  i, w, n) {
+    n = 0
+    for (i = 1; i < NF; i++) if ($i ~ /^[0-9]+$/) {
+      w = $(i + 1); gsub(/[^a-z]/, "", w)
+      if (w == "passed" || w == "failed" || w == "xfailed" || w == "xpassed") n += $i
+    }
+    return n
+  }
+  function flush_rust() {
+    if (rb) rust += (rsum_seen ? rsum : (rev > 0 ? rev : rban))
+    rb = 0; rsum_seen = 0; rsum = 0; rev = 0; rban = 0
+  }
+  /^running [0-9]+ tests?/          { flush_rust(); rb = 1; rban = $2; next }
+  /^test result: /                  { rb = 1; rsum_seen = 1; rsum = executed(); next }
+  /^test .* \.\.\. (ok|FAILED)/     { rb = 1; rev++; next }
+  /[0-9]+ tests? run/               { for (i = 1; i < NF; i++) if ($i ~ /^[0-9]+$/ && $(i+1) ~ /^tests?$/) nextest += $i; next }
+  /^ *--- (PASS|FAIL):/             { gdone++; next }
+  /^ *--- SKIP:/                    { gskip++; next }
+  /^=== RUN /                       { grun++; next }
+  /^(=+ )?(no tests ran|[0-9]+ [a-z]+(, [0-9]+ [a-z]+)*) in [0-9.]+s/ { psum_seen = 1; psum += executed(); next }
+  /^[^ ]+::[^ ]+ (PASSED|FAILED|XFAIL|XPASS)/ { pev++; next }
+  /^[A-Za-z0-9_.\/-]+\.py [.FEsxX]+/ { prog = $2; pev += gsub(/[.FxX]/, "", prog); next }
+  END {
+    flush_rust()
+    go = (gdone + gskip > 0) ? gdone : grun
+    py = psum_seen ? psum : pev
+    print rust + nextest + go + py
+  }
 ' "$LOG" 2>/dev/null)"
 [ -n "$UNITS" ] || UNITS=0
 
-NAMED="$(grep -cE '^(test [A-Za-z0-9_:]+ \.\.\.|--- (PASS|FAIL): |=== RUN |[A-Za-z0-9_./-]+::[A-Za-z0-9_]+ )' "$LOG" 2>/dev/null || true)"
+NAMED="$(grep -cE '^(test [A-Za-z0-9_:]+ \.\.\.|--- (PASS|FAIL): |=== RUN |[A-Za-z0-9_./-]+::[A-Za-z0-9_]+ |[A-Za-z0-9_./-]+\.py [.FEsxX]+)' "$LOG" 2>/dev/null || true)"
 [ -n "$NAMED" ] || NAMED=0
 
 ZERO_SELECTED=0

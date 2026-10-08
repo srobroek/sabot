@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -eux
+set -euxo pipefail
 
 # base-extras.sh -- the mutators, reducers, and remaining config/secret scanners for
 # the sabot base image.
@@ -106,10 +106,13 @@ chmod +x /usr/local/bin/hadolint /usr/local/bin/kube-linter /usr/local/bin/tflin
 # Prove each tool RUNS. For the two MUTATORS that is not enough: radamsa and zzuf both
 # answer --version while emitting their input unchanged if a build went wrong, and a
 # mutator that does not mutate turns a fuzzing campaign into a single-input test that
-# reports a clean. Assert the output actually DIFFERS from the input.
+# reports a clean. Assert the output is NON-EMPTY and DIFFERS from the input: empty
+# output differs from any seed, so a mutator that errored at mutate time used to pass.
+# pipefail makes that error fail the build too, and no `head` truncates the pipe, so a
+# long mutation cannot SIGPIPE the mutator into a false failure.
 radamsa --version
 zzuf --version
-creduce --version | head -1
+creduce --version
 hadolint --version
 kube-linter version
 tflint --version
@@ -121,16 +124,16 @@ trufflehog --no-update --version
 
 seed=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 for i in 1 2 3 4 5 6 7 8; do
-	out="$(printf '%s' "$seed" | radamsa --seed "$i" | tr -d '\0' | head -c 64)"
-	[ "$out" != "$seed" ] && break
+	out="$(printf '%s' "$seed" | radamsa --seed "$i" | tr -d '\0')"
+	[ -n "$out" ] && [ "$out" != "$seed" ] && break
 done
-[ "$out" != "$seed" ] || {
-	echo "base-extras: radamsa produced its input unchanged in 8 attempts; the mutator is broken" >&2
+[ -n "$out" ] && [ "$out" != "$seed" ] || {
+	echo "base-extras: radamsa produced no output or its input unchanged in 8 attempts; the mutator is broken" >&2
 	exit 1
 }
-out="$(printf '%s' "$seed" | zzuf -r 0.3 -s 42 | tr -d '\0' | head -c 64)"
-[ "$out" != "$seed" ] || {
-	echo "base-extras: zzuf produced its input unchanged; the mutator is broken" >&2
+out="$(printf '%s' "$seed" | zzuf -r 0.3 -s 42 | tr -d '\0')"
+[ -n "$out" ] && [ "$out" != "$seed" ] || {
+	echo "base-extras: zzuf produced no output or its input unchanged; the mutator is broken" >&2
 	exit 1
 }
 echo "base-extras: radamsa and zzuf both mutate; scanners and reducer answer"

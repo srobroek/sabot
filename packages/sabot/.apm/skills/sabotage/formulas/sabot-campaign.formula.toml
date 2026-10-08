@@ -38,9 +38,15 @@
 # `bd gate resolve <gate-bead>`; `bd close` on the gate TASK fails while the gate is open,
 # and it names the gate bead in the error. `bd gate check` never resolves a human gate, so
 # an unattended run parks rather than assuming consent.
+#
+# That chain exists only when the guarded step names the gate in its own `needs`. A gate
+# nothing depends on blocks nothing: the step it was meant to hold pours ready beside it,
+# and the approval becomes a bead the run walks past. Each gated step therefore names its
+# gate AND an unconditional co-anchor, so the autonomous pour that filters the gate out
+# still keeps an edge.
 
 formula = "sabot-campaign"
-description = "Sabot campaign {{run_id}} against {{target}}: attack across five surfaces, prove or refute each finding, report on two axes, and patch only on approval"
+description = "Sabot campaign {{run_id}} against {{target}}: attack across seven surfaces, prove or refute each finding, report on two axes, and patch only on approval"
 type = "workflow"
 
 [vars.run_id]
@@ -157,19 +163,24 @@ needs = ["surfaces"]
 labels = ["sab-audit", "non-work"]
 description = """Step 3. LOAD references/tooling.md and references/installer.md.
 
-Run scripts/install-tools.sh --probe as a host preflight. DELEGATE the image build,
-the dev-dep bake, and --assert-tools to a provisioner agent, which returns success
-ONLY when every manifest tool answered in-image. A provisioned image on a partial
-tool set is a coverage gap that reports as coverage.
+Run scripts/install-tools.sh --probe --images <images> as a host preflight, naming the
+sabot/<name>:1 images for the target's language stacks (the `stacks` field of
+scripts/detect-stacks.py), or `base` alone. An image not built yet is recorded for the
+proposal; it is built in the provision step, after approval.
+
+Run scripts/run-preflight.py --target <dir> --run-id <run_id> --skip-image-probe. It
+measures the runtime's memory pool and CPUs and writes <dir>/.sabot/<run_id>/preflight.json;
+a non-zero exit, including an unknown pool, ABORTS the run. Its
+concurrency.max_parallel_nodes sets the waves the budget table divides the nodes into.
 
 Propose the tool set per surface as a tiered table (default-on ON, opt-in OFF with a
 reason) together with a budget table: wall-clock per harness, parallel jobs, memory
-cap. Stamp `budget` on the epic.
+cap, the waves, and the worst-case wall-clock as `total_s`. Stamp `budget` on the epic.
 
-Do NOT list an action the hard rules forbid, even as unavailable.
+Do NOT list an action the hard rules forbid, even as unavailable. Do NOT build or
+extend an image here: the build installs what the user has not yet approved.
 
-Completion: `budget` stamped, and the provisioner's per-image assert results written
-to the artifacts dir."""
+Completion: `budget` stamped with `total_s`, and preflight.json written."""
 
 [steps.metadata]
 skill_hints = "sabot:sabotage"
@@ -195,10 +206,41 @@ Resolve with `bd close <gate-id>` or `bd gate resolve <gate-id>`; both work."""
 type = "human"
 
 [[steps]]
+id = "provision"
+title = "step 3 provision the approved images {{run_id}}"
+type = "task"
+# `tools-approval` is the gate this step waits on: the build runs networked installs of
+# the tool set the gate approves, so without the edge it built before the user had seen
+# the proposal. `probe-propose` is the co-anchor for the autonomous pour, which filters
+# the gate out.
+needs = ["probe-propose", "tools-approval"]
+labels = ["sab-audit", "non-work"]
+description = """Step 3, after approval. DELEGATE the image build, the dev-dep bake, and
+--assert-tools to ONE spawned provisioner agent (`task` in OMP, `general-purpose` in
+Claude Code), which runs the isolation.md Provisioning flow: build any missing surface
+image, extend each with the target's dev-deps via scripts/build-ext-image.sh, then
+assert it.
+
+The provisioner returns success ONLY when scripts/install-tools.sh --probe --images
+<images> passes and run-contained.sh --assert-tools answers for every manifest tool in
+each ext image. A provisioned image on a partial tool set is a coverage gap that
+reports as coverage. It returns the ext-image tags and the stack map, never the build
+output.
+
+Completion: the provisioner returned the ext-image tags and stack map, and its per-image
+assert results are written to the artifacts dir."""
+
+[steps.metadata]
+skill_hints = "sabot:sabotage"
+execution_agent_type = "general-purpose"
+
+[[steps]]
 id = "pre-pass"
 title = "step 4 repo-global pre-pass {{run_id}}"
 type = "task"
-needs = ["probe-propose"]
+# `provision` carries the `tools-approval` edge: every scanner and the baseline suite run
+# here, in the images it built, so this step waits on the approved, asserted images.
+needs = ["provision"]
 labels = ["sab-audit", "non-work"]
 description = """Step 4. Several facts are identical for every surface, so computing
 them per surface runs the same work N times.
@@ -278,12 +320,12 @@ id = "author-harnesses"
 title = "step 7 author the attack plan {{run_id}}"
 type = "task"
 needs = ["closed-classes"]
-labels = ["sab-audit", "non-work", "agent:fuzzer"]
+labels = ["sab-audit", "non-work", "agent:sabot-fuzzer"]
 condition = "{{scope_mode}} != quick"
 description = """Step 7. Brief from references/fuzzer-brief.md; patterns in
 references/harnesses.md.
 
-Spawn `fuzzer` per surface to write harnesses, seed corpora, and attack scenarios for
+Spawn `sabot-fuzzer` per surface to write harnesses, seed corpora, and attack scenarios for
 every reachable entry point, mirroring the repo's own convention for where fuzz targets
 live. Each harness asserts an invariant recon discovered.
 
@@ -302,13 +344,16 @@ report the VERIFIED count rather than the intended one.
 
 [steps.metadata]
 skill_hints = "sabot:sabotage"
-execution_agent_type = "sabot:fuzzer"
+execution_agent_type = "sabot:sabot-fuzzer"
 
 [[steps]]
 id = "attack"
 title = "step 8 attack {{run_id}}"
 type = "task"
-needs = ["closed-classes"]
+# `author-harnesses` is what the gremlin executes, so attacking before it closes runs an
+# empty or half-written harness set. `closed-classes` anchors the quick pour, which filters
+# `author-harnesses` out.
+needs = ["closed-classes", "author-harnesses"]
 labels = ["sab-audit", "non-work", "agent:gremlin"]
 condition = "{{scope_mode}} != harness-only"
 description = """Step 8. Brief from references/gremlin-brief.md.
@@ -318,7 +363,11 @@ DAG edge to each other, and this file is their only channel. Validate an environ
 fact on ONE node before writing it into every Brief; a wrong fact broadcast to all
 nodes once filled the host disk. A retraction quotes the original wording.
 
-Spawn one `gremlin` per surface node, in parallel. Each runs its surface's scanners plus
+Spawn one `gremlin` per surface node, in parallel up to the admitted concurrency. Before
+each node's container starts, run scripts/admit-node.py --preflight
+<dir>/.sabot/<run_id>/preflight.json --mem-cap <MB>, with one --running-cap <MB> per node
+still running, and dispatch only on exit 0; exit 3 means wait for a node to finish. Each
+runs its surface's scanners plus
 the rules recon synthesized, claims its harness wisps with `bd ready --parent <node>
 --label sab-harness --claim` (atomic, so no verify-then-steal race), executes them
 inside the approved budget against LOCAL code only, and reads for what scanners miss:
@@ -326,7 +375,7 @@ trust boundaries, authz logic, guard bypasses, prompt-injection paths, unbounded
 
 The gremlin edits nothing, including a harness it finds broken. A broken, absent, or
 self-reported-broken harness gets a re-author wisp stamped `supersedes`, routed back to
-`fuzzer`. That back-edge is prose and not a formula edge, because a DAG cannot express
+`sabot-fuzzer`. That back-edge is prose and not a formula edge, because a DAG cannot express
 it.
 
 An absent tool is skipped, warned about, and recorded with an install hint. PROBE before
@@ -340,7 +389,7 @@ and drops a real defect out of the project's queue.
 
 File one `sab-coverage` wisp per node with `entry_points_total` and
 `entry_points_executed` -- a harness count cannot express "13 of 706". Release every
-claimed wisp back to `open` with `state` stamped. Certify tool integrity, or every
+claimed wisp back to `open` with its state set by `bd set-state`. Certify tool integrity, or every
 tool-sourced finding on the surface caps at HARDENING."""
 
 [steps.metadata]
@@ -359,8 +408,10 @@ labels = ["sab-audit", "non-work"]
 condition = "{{live_spawn}} == yes"
 description = """Step 9. LOAD references/agentic-fuzz.md. OPT-IN ONLY.
 
-Runs generated attacks against a live hook, skill, or agent inside a Worktrunk lease.
-REFUSE on a whole-repo target: the blast radius is the grant, not the file list.
+Runs generated attacks against a live hook, skill, or agent inside a container whose
+only writable tree is a Worktrunk lease; the lease alone isolates nothing. Egress is
+enforced by the container network, or the egress cases are NOT EXECUTED. REFUSE on a
+whole-repo target: the blast radius is the grant, not the file list.
 
 Read the canaries BEFORE discarding the lease. A lease torn down unread proves nothing
 either way.
@@ -384,20 +435,25 @@ description = """Step 10. Brief from references/triager-brief.md.
 Skip as a no-op when step 6 closed the memory-safety class, and record it as
 `skipped-because-closed` rather than as a clean triage.
 
-`triager` claims each crash batch, re-runs the recorded command FIRST and quotes both
-exit codes, dedups by normalized stack, and minimizes each crash to its smallest
-reproducing input. Check `wc -c` and refuse a 0-byte result. Keep the original input
-beside the minimized one and stamp both paths.
+`triager` claims each crash batch and replays every crash inside the surface image
+through run-contained.sh with a per-repro `--timeout`, never on the host. It re-runs
+the recorded command FIRST and quotes both exit codes, dedups by normalized stack, and
+minimizes each crash to its smallest reproducing input. A 0-byte result stands only
+when its replay matches the original crash signature. Keep the original input beside
+the minimized one and stamp both paths.
 
 State what you normalized: stripping an in-function line offset is defensible, stripping
 the panic message is not.
 
-Stamp `state:minimized`, `kind`, `minimized_path`, `minimized_bytes`, `original_path`,
-`repro_cmd`, `repro_rc`, and `dedup_key`, copying those key names VERBATIM -- a triager
-that invented `min_input` and `triage_class` once wrote seven files to disk that no part
-of the report could reach. Read every wisp back and paste the missing-key diff.
+Stamp `kind`, `minimized_path`, `minimized_bytes`, `original_path`, `repro_cmd`,
+`repro_rc`, and `dedup_key`, copying those key names VERBATIM -- a triager that invented
+`min_input` and `triage_class` once wrote seven files to disk that no part of the report
+could reach -- and set `state=minimized` with `bd set-state`. Read every wisp back and
+paste the missing-key diff. File one untiered finding per distinct crash with
+`--no-inherit-labels`, linked `discovered-from` to every crash in its group.
 
-The triager tiers nothing, edits nothing, and never re-fuzzes to find a fresh crash."""
+The triager tiers nothing, assigns no impact, edits nothing, and never re-fuzzes to
+find a fresh crash."""
 
 [steps.metadata]
 skill_hints = "sabot:sabotage"
@@ -412,12 +468,13 @@ type = "task"
 # parallel with step 0 and a challenger tiers findings that no gremlin has produced.
 # Measured on a real pour: 16 issues, `bd ready` returned step 11 beside step 0, and
 # both `bd cook` and `bd mol pour` reported success.
-needs = ["triage", "closed-classes"]
-labels = ["sab-audit", "non-work", "agent:challenger"]
+# `live-spawn` files findings too, so tiering before it closes leaves its findings untiered.
+needs = ["triage", "closed-classes", "live-spawn"]
+labels = ["sab-audit", "non-work", "agent:sabot-challenger"]
 condition = "{{scope_mode}} != quick"
 description = """Step 11. Brief from references/challenger-brief.md.
 
-`challenger` claims the finding wisps and sets each evidence tier: PROVEN, REACHABLE,
+`sabot-challenger` claims the finding wisps and sets each evidence tier: PROVEN, REACHABLE,
 HARDENING, or REFUTED. Read-only diagnostics only.
 
 REFUSE to tier a finding from a resource-limited run, and refuse where the benign
@@ -440,7 +497,7 @@ deleted."""
 
 [steps.metadata]
 skill_hints = "sabot:sabotage"
-execution_agent_type = "sabot:challenger"
+execution_agent_type = "sabot:sabot-challenger"
 
 [[steps]]
 id = "synthesize"
@@ -454,9 +511,10 @@ appendix to tiering, and one live run went from step 11 straight to the report -
 tiered findings, zero patterns, and nothing detected the omission.
 
 Histogram `root_cause` across the tiered findings (`bd list --label sab-finding
---metadata-field run_id=<id>`). File a pattern wisp per `root_cause` spanning two or
-more nodes, stamped `kind`, `instances`, `nodes`, `impact`, `root_cause`, and labelled
-`sab-pattern,sab-audit,non-work`.
+--metadata-field run_id=<id> --all --limit 0 --json`; without `--limit 0` bd returns
+the first 50 rows). File a pattern wisp per `root_cause` spanning two or more nodes,
+stamped `kind`, `instances`, `nodes`, `impact`, `root_cause`, labelled
+`sab-finding,sab-pattern,sab-audit`, and created with `--no-inherit-labels`.
 
 Rank a pattern by instance count and node span. NEVER let a pattern replace its
 instances: the instances keep their own rows and the pattern is an additional finding.
@@ -485,9 +543,9 @@ description = """Step 13. LOAD references/network-stage.md. OPT-IN ONLY, and sep
 from every other consent.
 
 Runs once in a container WITH egress, and performs LOOKUPS rather than attacks: secret
-liveness, a fresh advisory DB against the baked one, action-tag drift, registry-only
-rule packs. Never probe, fuzz, or attack anything remote. A tool that only needs a
-one-time DOWNLOAD belongs in the image instead.
+liveness, a fresh advisory DB against the baked one, Rust advisories, action-ref
+resolution, registry-only rule packs. Never probe, fuzz, or attack anything remote. A
+tool that only needs a one-time DOWNLOAD belongs in the image instead.
 
 Verifying a secret sends it to the provider, so that needs its own second consent, and
 a third party's key is never verified at all. Never print a credential: report
@@ -510,7 +568,18 @@ type = "task"
 # READY in parallel with step 0 -- a campaign that emits its findings before it has
 # attacked anything. Measured on a real pour: 15 issues, `bd ready` returned step 14
 # beside step 0, and nothing in bd reported a problem.
-needs = ["synthesize", "closed-classes"]
+# Every finding-producing step is named, not only the last one on the full route: a quick
+# pour filters `synthesize` and `tier` out, and with only `closed-classes` left the report
+# started beside the attack it reports on.
+needs = [
+  "synthesize",
+  "closed-classes",
+  "author-harnesses",
+  "attack",
+  "triage",
+  "live-spawn",
+  "network-stage",
+]
 labels = ["sab-audit", "non-work"]
 description = """Step 14. LOAD references/report-template.md.
 
@@ -571,7 +640,10 @@ type = "human"
 id = "remediate"
 title = "step 15 patch {{run_id}}"
 type = "task"
-needs = ["report"]
+# `patch-approval` is the gate this step waits on: without the edge the hardener's patch
+# step became ready the moment the report closed, with the approval still open beside it.
+# Both share one condition, so neither pours without the other.
+needs = ["report", "patch-approval"]
 labels = ["sab-audit", "non-work", "agent:hardener"]
 condition = "{{remediation_route}} != report only"
 description = """Step 15. LOAD references/remediation.md; Brief from
@@ -585,8 +657,9 @@ the VALUE rather than the panic. Never edit a check in the direction of acceptin
 defect, and never make a check pass by editing its configuration.
 
 Write a regression test per PROVEN finding, and graduate the rule behind it into the
-repo's own lint config: the test guards that one instance and only the rule guards the
-next. Paste the suppression counts before and after.
+repo's own lint config when the recorded approval names that graduation: the test
+guards that one instance and only the rule guards the next. An unapproved graduation
+stays a proposal in the report. Paste the suppression counts before and after.
 
 Stamp `state:patched`, `patch_files`, `regression_test`, `rule_graduated`,
 `verified_by`, and `verification`. On the ticket route stamp `ticket_id` per finding, so

@@ -316,7 +316,8 @@ def test_a_harness_in_an_unknown_language_is_unvalidated_not_a_pass(tmp_path):
     assert checks(p.stdout)["compiles"] == "unvalidated"
 
 
-def test_an_absent_compiler_is_unvalidated_not_a_pass(tmp_path):
+def test_a_go_harness_without_an_image_is_unvalidated_not_a_pass(tmp_path):
+    (tmp_path / "go.mod").write_text("module x\n")
     f = tmp_path / "harness.go"
     f.write_text("package main\n")
     empty_path = tmp_path / "emptybin"
@@ -324,6 +325,68 @@ def test_an_absent_compiler_is_unvalidated_not_a_pass(tmp_path):
     p = run("--kind", "harness", str(f), "--json", path_dir=empty_path)
     assert p.returncode == 3
     assert checks(p.stdout)["compiles"] == "unvalidated"
+
+
+def test_a_rust_build_check_never_runs_cargo_on_the_host(tmp_path):
+    # `cargo check` runs build.rs and proc macros, and SKILL.md's hard rules put every
+    # build-script execution in a container. The old check ran it wherever it was called.
+    crate = tmp_path / "fuzz"
+    (crate / "fuzz_targets").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text("[package]\nname='f'\n")
+    f = crate / "fuzz_targets" / "parse.rs"
+    f.write_text("fn main() {}\n")
+    marker = tmp_path / "cargo-ran"
+    bindir = tmp_path / "bin"
+    stub(bindir, "cargo", f'touch "{marker}"\nexit 0\n')
+    p = run("--kind", "harness", str(f), "--json",
+            path_dir=Path(f"{bindir}:{os.environ['PATH']}"))
+    assert p.returncode == 3, p.stdout
+    assert checks(p.stdout)["compiles"] == "unvalidated"
+    assert not marker.exists(), "cargo ran on the host"
+
+
+def _module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("validate_generated", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_contained_builds_use_the_package_context(tmp_path):
+    # A single-file `go vet x.go` or `tsc x.ts` rejects a harness that imports siblings.
+    mod = _module()
+    (tmp_path / "go.mod").write_text("module x\n")
+    (tmp_path / "pkg" / "fz").mkdir(parents=True)
+    go = tmp_path / "pkg" / "fz" / "h.go"
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "tsconfig.json").write_text("{}")
+    (tmp_path / "web" / "src").mkdir()
+    ts = tmp_path / "web" / "src" / "h.ts"
+    (tmp_path / "Cargo.toml").write_text("[package]\nname='x'\n")
+    (tmp_path / "fuzz_targets").mkdir()
+    rs = tmp_path / "fuzz_targets" / "p.rs"
+    assert mod.contained_build(go, tmp_path)[0] == "cd /target && go vet ./pkg/fz"
+    assert mod.contained_build(ts, tmp_path)[0] == "tsc --noEmit -p /target/web"
+    assert mod.contained_build(rs, tmp_path)[0] == (
+        "cargo check --quiet --offline --manifest-path /target/Cargo.toml")
+
+
+def test_an_explicitly_empty_seed_is_accepted(tmp_path):
+    # An empty input is a legitimate parser test and a legitimate minimal reproducer.
+    seed = tmp_path / "empty.input"
+    seed.write_bytes(b"")
+    p = run("--kind", "input", str(seed), "--allow-empty", "--json")
+    assert p.returncode == 0, p.stdout
+    assert checks(p.stdout)["non_empty"] == "pass"
+
+
+def test_allow_empty_does_not_excuse_an_empty_harness(tmp_path):
+    f = tmp_path / "h.py"
+    f.write_bytes(b"")
+    p = run("--kind", "harness", str(f), "--allow-empty", "--json")
+    assert p.returncode == 1
+    assert checks(p.stdout)["non_empty"] == "fail"
 
 
 # --- reporting --------------------------------------------------------------

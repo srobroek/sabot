@@ -41,7 +41,9 @@ surface reads as findings-free. `jobs` is derived the same way, since -j 4 again
 with three containers competing is oversubscription.
 
 Admission is enforced by `admit-node.py`, which reads this record: a node is refused when
-the running sum of memory caps would exceed `memory.usable_mb`.
+the running sum of memory caps would exceed `memory.usable_mb`. A pool the runtime did not
+report is UNKNOWN, and an unknown pool fails `target_fits_memory` rather than being
+planned against the laptop's memory.
 
 TIME is not a safety limit and is not enforced here. `--deadline-s` is optional and absent
 by default; when set it is recorded for the container to stop itself at the deadline and
@@ -58,7 +60,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -233,8 +234,8 @@ def host_capacity(engine: str | None) -> tuple[int | None, int | None, str, bool
 
     Measured on the reference host: `colima list` and `docker info` agree at 8 GiB / 4 CPU
     / 60 GiB, while the laptop underneath has far more. Planning against the laptop is how
-    a run gets dispatched past the line and OOM-killed, so a non-runtime source is marked
-    `measured=False` and concurrency is clamped to 1 rather than computed from it.
+    a run gets dispatched past the line and OOM-killed, so only the runtime's own answer
+    counts. When it cannot answer, the pool is unknown: (None, None, reason, False).
     """
     if engine:
         rc, out = _run([engine, "info", "--format", "{{.MemTotal}} {{.NCPU}}"], timeout=30)
@@ -243,18 +244,9 @@ def host_capacity(engine: str | None) -> tuple[int | None, int | None, str, bool
             if int(parts[0]) > 0:
                 return (int(parts[0]) // (1024 * 1024), int(parts[1]),
                         f"{engine} info MemTotal/NCPU", True)
-    if sys.platform == "darwin":
-        rc, out = _run(["sysctl", "-n", "hw.memsize"], timeout=10)
-        if rc == 0 and _first_line(out).isdigit():
-            return (int(_first_line(out)) // (1024 * 1024), os.cpu_count(),
-                    "sysctl hw.memsize (the LAPTOP, not the VM the containers run in)",
-                    False)
-    meminfo = Path("/proc/meminfo")
-    if meminfo.is_file():
-        for line in meminfo.read_text().splitlines():
-            if line.startswith("MemTotal:"):
-                return int(line.split()[1]) // 1024, os.cpu_count(), "/proc/meminfo", True
-    return None, os.cpu_count(), "unavailable", False
+        return (None, None,
+                f"unavailable: `{engine} info` did not report MemTotal/NCPU (rc={rc})", False)
+    return None, None, "unavailable: no container runtime", False
 
 
 def free_mb(path: Path) -> int:
@@ -410,25 +402,23 @@ def main(argv: list[str] | None = None) -> int:
 
     est = estimate_resources(target)
     hmem, ncpu, hmem_src, hmem_measured = host_capacity(engine)
-    usable_mem = max(0, hmem - VM_RESERVE_MB) if hmem else None
-    fits_mem = usable_mem is None or est["per_node_mem_mb"] <= usable_mem
+    usable_mem = max(0, hmem - VM_RESERVE_MB) if hmem_measured else None
+    # An unknown pool is refused, never assumed to fit: the laptop's memory is not the VM's.
+    fits_mem = usable_mem is not None and est["per_node_mem_mb"] <= usable_mem
     check("target_fits_memory", fits_mem,
           f"needs {est['per_node_mem_mb']} MiB/node; usable "
-          f"{usable_mem if usable_mem is not None else 'unknown'} MiB of "
-          f"{hmem} MiB ({hmem_src})")
+          f"{usable_mem if usable_mem is not None else 'UNKNOWN'} MiB of "
+          f"{hmem if hmem is not None else 'UNKNOWN'} MiB ({hmem_src})")
     fits_disk = disk_free * DISK_PLAN_FRACTION >= est["per_node_disk_mb"]
     check("target_fits_disk", fits_disk,
           f"needs {est['per_node_disk_mb']} MiB/node; plannable "
           f"{int(disk_free * DISK_PLAN_FRACTION)} MiB of {disk_free} MiB free")
 
     # max_concurrent = floor(usable_mem / per_node_memory_cap). Arithmetic, not a preference.
+    # With the pool unknown the run is refused above, and the only honest figure is 1.
     by_disk = int(disk_free * DISK_PLAN_FRACTION) // max(1, est["per_node_disk_mb"])
-    by_mem = (usable_mem // max(1, est["per_node_mem_mb"])) if usable_mem else 1
+    by_mem = (usable_mem // max(1, est["per_node_mem_mb"])) if usable_mem is not None else 1
     max_parallel = max(1, min(by_disk, by_mem))
-    if not hmem_measured:
-        # The only honest number from a non-runtime source is 1: the laptop's memory is not
-        # the pool the containers draw from.
-        max_parallel = 1
     # -j 4 against 4 vCPUs with three containers competing is oversubscription; two nodes
     # had to drop to -j 1 to survive. Under concurrency the effective figure is 1.
     jobs = max(1, min(args.jobs or (ncpu or 1), (ncpu or 1) // max_parallel))
@@ -499,7 +489,8 @@ def main(argv: list[str] | None = None) -> int:
                 "exceed memory.usable_mb. Checkable, not advisory."
             ),
             "usable_mb": usable_mem,
-            "check_with": "admit-node.py --preflight <this file> --mem-cap MB --running-mb MB",
+            "check_with": "admit-node.py --preflight <this file> --mem-cap MB "
+                          "[--running-cap MB, once per running node]",
         },
         "retry_ladder": RETRY_LADDER,
         "no_auto_retry": [

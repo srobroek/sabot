@@ -26,9 +26,9 @@ def test_jazzer_is_not_installed_globally():
     Measured, core resolves them as SIBLINGS, so every run died before its first input:
     "ENOENT ... @jazzer.js/bug-detectors/dist/internal", while --version still answered.
     """
-    # Anchored past a leading `&&`, not a bare substring: the rationale comment below
-    # quotes the broken command verbatim, so an unanchored search flags its own docs.
-    globals_ = re.findall(r"^\s*(?:&&\s*)?npm i -g ([^\\\n]*)", BODY, re.M)
+    # Anchored past a leading `RUN` or `&&`, not a bare substring: the rationale comment
+    # below quotes the broken command verbatim, so an unanchored search flags its own docs.
+    globals_ = re.findall(r"^\s*(?:RUN\s+|&&\s*)?npm i -g ([^\\\n]*)", BODY, re.M)
     assert globals_, "the image still installs something globally; check this test"
     for line in globals_:
         assert "jazzer" not in line, \
@@ -127,3 +127,20 @@ def test_matrix_records_the_eslint_measurement():
     matrix = MATRIX.read_text()
     assert "ABSOLUTE PATH (ESM ignores `NODE_PATH`)" in matrix
     assert "no-unsanitized/method` on `document.write`" in matrix
+
+
+def test_the_node_image_is_built_on_the_shared_base():
+    """FROM node:22 discarded the base, so gitleaks, opengrep, trivy and the baked DBs were
+    absent from an image documented as base + node."""
+    froms = re.findall(r"^FROM\s+(\S+)(?:\s+AS\s+(\S+))?", BODY, re.MULTILINE)
+    assert froms, "Dockerfile.node has no FROM"
+    final_image, final_alias = froms[-1]
+    assert final_image == "${BASE}" and not final_alias, \
+        f"the final stage must be FROM ${{BASE}}, got FROM {final_image}"
+    assert re.search(r"^ARG BASE=sabot/base:1$", BODY, re.MULTILINE)
+    # Node is copied in from a named stage, never inherited from it.
+    stages = {alias for _, alias in froms if alias}
+    for alias in stages:
+        assert f"COPY --from={alias} " in BODY, f"stage {alias} is declared but never used"
+    assert "COPY --from=node /usr/local/bin/node " in BODY
+    assert "USER breaker" in BODY, "run as the base's uid-1000 user"

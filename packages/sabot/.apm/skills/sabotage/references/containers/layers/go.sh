@@ -96,8 +96,12 @@ EOF
 	# `|| true` is deliberate: gosec exits non-zero BECAUSE it found the planted G404,
 	# so its status cannot distinguish a finding from a crash. The grep below is the
 	# real assertion -- a crashed gosec writes no G404 and fails the probe there.
-	GOFLAGS='' GOPROXY=off gosec ./... 2>&1 | tee "$probe/out.txt" || true
-	grep -q G404 "$probe/out.txt"
+	# Redirected rather than piped through tee, so no pipeline stage owns the status.
+	GOFLAGS='' GOPROXY=off gosec ./... >"$probe/out.txt" 2>&1 || true
+	grep -q G404 "$probe/out.txt" || {
+		cat "$probe/out.txt" >&2
+		exit 1
+	}
 	echo "gosec baked (rules load: G404 found on the probe module)"
 )
 rm -rf "${probe:?}"

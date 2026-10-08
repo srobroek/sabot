@@ -83,7 +83,7 @@ fi
 # built). Set it empty to emit every unit; leave it unset to let the base decide.
 STACK_SKIP="${SABOT_STACK_SKIP-}"
 if [ -n "$DK" ] && [ -z "${SABOT_STACK_SKIP+set}" ]; then
-  for probe in rust:cargo node:npm python:pip go:go; do
+  for probe in rust:cargo node:npm python:pip3 go:go; do
     stack="${probe%%:*}"; bin="${probe##*:}"
     $DK run --rm --network none --entrypoint sh "$BASE" \
       -c "command -v $bin >/dev/null 2>&1" >/dev/null 2>&1 \
@@ -109,24 +109,7 @@ base = os.environ["BASE"]
 target = os.environ["TARGET"]
 ctx = os.environ["CTX"]
 
-# The node fetch is chosen by the lockfile the repo actually ships, not by a single
-# npm-shaped default. Measured: the default `npm ci || npm install` cannot provision a
-# pnpm workspace -- `npm ci` has no package-lock.json to read, and the `npm install`
-# fallback then chokes on `workspace:` protocol ranges -- so the ext image had to be
-# hand-rolled from a manual context. `pnpm fetch` reads the lockfile alone, which suits a
-# context holding no member package.json files at all.
-NODE_FETCH = [
-    ("pnpm-lock.yaml", "corepack pnpm fetch || pnpm fetch"),
-    ("yarn.lock", "corepack yarn install --immutable || yarn install --frozen-lockfile"),
-    ("package-lock.json", "npm ci"),
-]
-
-
-def node_fetch(unit):
-    for lock, cmd in NODE_FETCH:
-        if lock in unit["lockfiles"]:
-            return cmd
-    return "npm install"
+PY_REQUIREMENTS = ".sabot-requirements.txt"
 
 
 def cargo_member_manifests(unit):
@@ -146,11 +129,40 @@ def cargo_member_manifests(unit):
         and m["manifest"].startswith(prefix)
     ]
 
+skip = set(os.environ.get("STACK_SKIP", "").split())
+
+# Distro -dev packages the -sys crates of the target link through pkg-config (the
+# GTK/webkit stack of a Tauri app), read off the `system_packages` field detect-stacks.py
+# emits. No apostrophe in this heredoc: bash 3.2 parses a heredoc inside $(...) as shell
+# and an unbalanced quote breaks the whole script. They live here, not
+# in the rust image, because only the target that names the crate needs them. The RUN
+# asserts pkg-config RESOLVES each module, since an installed pkg-config with no .pc file
+# is what left 199 Tauri handlers NOT EXECUTED while the binary answered.
+system = {}
+for u in result["bake_units"]:
+    if u["stack"] in skip or not u["fetch"]:
+        continue
+    for pkg in u.get("system_packages", []):
+        system.setdefault(pkg["apt"], pkg["pkg_config"])
+
 lines = [
     f"FROM {base}",
     # Persistent dep prefix, outside the run-time tmpfs at /scratch. Owned by the
     # non-root breaker uid so the fetch (and a run-time read) needs no root.
     "USER root",
+]
+if system:
+    print(f"build-ext-image: system packages: {' '.join(system)}", file=sys.stderr)
+    lines += [
+        "RUN apt-get update -q \\",
+        f" && apt-get install -y --no-install-recommends {' '.join(system)} \\",
+        " && rm -rf /var/lib/apt/lists/* \\",
+        f" && for pc in {' '.join(system.values())}; do \\",
+        '      pkg-config --exists "$pc" || \\',
+        '        { echo "build-ext-image: pkg-config cannot resolve $pc" >&2; exit 1; }; \\',
+        "    done",
+    ]
+lines += [
     "RUN mkdir -p /deps && chown 1000:1000 /deps",
     "USER 1000:1000",
     "ENV CARGO_HOME=/deps/cargo \\",
@@ -163,10 +175,16 @@ lines = [
 # One COPY + one RUN per bake unit, ordered so the dep layer caches on the
 # manifest+lock: only a lock change re-fetches. Copy ONLY manifest+lock, never the
 # source, so no audited code enters a layer.
-skip = set(os.environ.get("STACK_SKIP", "").split())
 for u in result["bake_units"]:
     if u["stack"] in skip:
         continue
+    # A unit with no resolver is reported, never emitted as a RUN that cannot succeed and
+    # never dropped silently: an unprovisioned stack is a coverage gap for its surface.
+    if not u["fetch"]:
+        print(f"build-ext-image: skipped {u['manifest']}: {u['skip_reason']}",
+              file=sys.stderr)
+        continue
+    print(f"build-ext-image: {u['manifest']} via {u['resolver']}", file=sys.stderr)
     d = u["dir"]
     dest = "./" if d == "." else f"{d}/"
     copy_rel = [u["manifest"]] + [
@@ -180,6 +198,15 @@ for u in result["bake_units"]:
         dst = os.path.join(ctx, rel)
         os.makedirs(os.path.dirname(dst) or ctx, exist_ok=True)
         shutil.copy2(src, dst)
+    # A python unit installs the pins detect-stacks read from the manifest or uv.lock.
+    # They are written here rather than resolved in-image, because resolving
+    # pyproject.toml there means building the project, and the project build is target
+    # code.
+    if u.get("requirements"):
+        req_rel = os.path.join(os.path.dirname(u["manifest"]), PY_REQUIREMENTS)
+        with open(os.path.join(ctx, req_rel), "w") as fh:
+            fh.write("\n".join(u["requirements"]) + "\n")
+        copy_rel.append(req_rel)
     present = [rel for rel in copy_rel if os.path.exists(os.path.join(ctx, rel))]
     if not present:
         continue
@@ -212,9 +239,8 @@ for u in result["bake_units"]:
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.copy2(src, dst)
                 lines.append(f"COPY --chown=1000:1000 {rel} {member_dir}/")
-    fetch = node_fetch(u) if u["stack"] == "node" else u["fetch"]
     cd = "" if d == "." else f'cd "{d}" && '
-    lines.append(f"RUN {cd}{fetch}")
+    lines.append(f"RUN {cd}{u['fetch']}")
 
 sys.stdout.write("\n".join(lines) + "\n")
 PY
@@ -227,9 +253,14 @@ if [ "$DRYRUN" -eq 1 ]; then
   exit 0
 fi
 
-# Network is ON at build (the default): the toolchain's own resolver fetches exactly
-# what the manifest names, while no target code runs. Re-tagging is idempotent; the
-# layer cache keyed on the copied lock skips an unchanged re-fetch.
+# Network is ON at build (the default) so the toolchain's own resolver can fetch exactly
+# what the manifest names. No target or dependency code runs while it is on: every fetch
+# detect-stacks.py emits disables lifecycle scripts or installs wheels only. Re-tagging is
+# idempotent; the layer cache keyed on the copied lock skips an unchanged re-fetch.
 printf 'build-ext-image: runtime=%s base=%s tag=%s units=%s\n' \
   "$DK" "$BASE" "$TAG" "$(printf '%s' "$DETECT_JSON" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["bake_units"]))')" >&2
-exec "$DK" build -f "$CTX/Dockerfile" -t "$TAG" "$CTX"
+# Not `exec`: exec replaces the shell, so the EXIT trap never fired and every build
+# leaked its temp context.
+rc=0
+"$DK" build -f "$CTX/Dockerfile" -t "$TAG" "$CTX" || rc=$?
+exit "$rc"

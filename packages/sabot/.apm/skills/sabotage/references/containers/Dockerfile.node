@@ -1,4 +1,11 @@
-# Node/web surface. Base + node, jazzer, fast-check, retire.
+# Node/web surface. Base + node, jazzer, fast-check, retire, eslint, playwright.
+#
+# Composes per the base model: FROM the language-free base, so the cross-surface
+# scanners (gitleaks, opengrep, trivy, osv-scanner) and their baked databases are in
+# this image too. Node itself is copied out of the official image rather than built on
+# it: an image FROM node:22 would drop the whole shared floor.
+#
+# Build: docker build -f Dockerfile.node -t sabot/node:1 --build-arg BASE=sabot/base:1 .
 #
 # retire.js reads its vulnerability definitions from a `jsrepository-v5.json` it
 # fetches from raw.githubusercontent.com on every run. Under --network none that
@@ -7,20 +14,28 @@
 # which reads the local copy and skips the fetch (retire 5.x has no --noupdate flag;
 # --jsrepo <local file> is the offline mechanism).
 #
-# The tag is trixie-slim, not the default slim (bookworm), because Jazzer.js ships a
-# PREBUILT arm64 native addon linked against GLIBC_2.38. Bookworm carries 2.36, so
-# `jazzer` died at dlopen with ERR_DLOPEN_FAILED while `npm i -g` had reported
-# success -- the fuzzer was installed and unrunnable. Trixie carries 2.41 (bs-156).
+# The node stage is trixie-slim, the base's own Debian release, because Jazzer.js ships
+# a PREBUILT arm64 native addon linked against GLIBC_2.38. Bookworm carries 2.36, so
+# `jazzer` died at dlopen with ERR_DLOPEN_FAILED while `npm i -g` had reported success --
+# the fuzzer was installed and unrunnable. Trixie carries 2.41 (bs-156), and the addon
+# loads against the base's glibc, not the stage's.
 ARG BASE=sabot/base:1
-FROM node:22-trixie-slim
+FROM node:22-trixie-slim AS node
+
+FROM ${BASE}
 USER root
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/include/node /usr/local/include/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && node --version && npm --version
 # Not masked by `|| true`: a failed install must fail the build, because a missing
 # fuzzer reported as present returns a clean the campaign did not earn. The build
 # then RUNS each tool, since installing a native addon and loading it are different
-# questions -- the one this image got wrong.
-RUN apt-get update -q && apt-get install -y --no-install-recommends ripgrep git ca-certificates >/dev/null \
- && rm -rf /var/lib/apt/lists/* \
- && npm i -g fast-check retire >/dev/null \
+# questions -- the one this image got wrong. git, ripgrep and ca-certificates come
+# from the base.
+RUN npm i -g fast-check retire >/dev/null \
  && retire --version \
  && NODE_PATH=/usr/local/lib/node_modules node -e 'require("fast-check")'
 
@@ -136,10 +151,9 @@ RUN mkdir -p /tmp/retirejs && cd /tmp/retirejs && git init -q \
  && cp repository/jsrepository-v5.json /opt/sabot-db/retire/ \
  && rm -rf /tmp/retirejs
 
-# node:22-slim already ships a uid-1000 user ("node"), so reuse it rather than create
-# a colliding "breaker" (useradd --uid 1000 fails "UID not unique"). run-contained.sh
-# runs --user 1000:1000, so this uid owns the writable mounts either way.
-RUN mkdir -p /artifacts /scratch && chown 1000:1000 /artifacts /scratch /opt/sabot-db/retire
-USER 1000:1000
+# The base's `breaker` user is uid 1000, which run-contained.sh runs as. It already owns
+# /artifacts, /scratch and the base's /opt/sabot-db; the retire bake above ran as root.
+RUN chown -R breaker:breaker /opt/sabot-db/retire
+USER breaker
 WORKDIR /scratch
 VOLUME /artifacts

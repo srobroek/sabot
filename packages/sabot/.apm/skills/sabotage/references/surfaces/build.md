@@ -64,15 +64,17 @@ NOT Never run a build or install to observe it without the isolation below. Obse
 Mostly a reading surface, since building to observe is running the payload. Two
 executable checks, both isolated:
 
-- **Script census.** `fuzzer` lists every install/build script and what each
+- **Script census.** `sabot-fuzzer` lists every install/build script and what each
   invokes; `gremlin` runs `npm install --ignore-scripts` versus a scripted install
-  in a throwaway container or worktree and diffs what changed.
-- **Building in a sandbox.** When a `build.rs` or proc macro must be run to judge it, do
-  it in a Worktrunk lease with no network and canaries seeded outside the lease, per
-  `agentic-fuzz.md`'s containment. A canary touched, or a network call attempted, is
-  the finding.
+  in a throwaway container and diffs what changed.
+- **Building in a sandbox.** When a `build.rs` or proc macro must be run to judge it, run
+  the build through `scripts/run-contained.sh` (`--net none`, the target read-only, a
+  `--copy-src` copy when the build must write), with canaries seeded in the container
+  outside the build tree. A Worktrunk lease is a working tree, not a sandbox: it shares
+  the host's network and credentials, so it isolates nothing on its own. A canary
+  touched, or a network call attempted, is the finding.
 
-MUST Run any build-time execution in a lease with no outbound network and canaries seeded outside it, since the payload runs the moment the build does.
+MUST Run any build-time execution through `run-contained.sh` with `--net none` and canaries seeded outside the build tree, since the payload runs the moment the build does. A Worktrunk lease is never the boundary.
 MUST Diff the git tree against the published or release artifact when one exists, because the xz vector hides the payload in the tarball rather than the repo.
 
 ## Impact calibration

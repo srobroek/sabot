@@ -11,11 +11,23 @@ Usage:
   detect-stacks.py [--repo <dir>] [--bake]
 
   (default) with no --bake, emit the manifest map + detected stacks as JSON.
-          bake_units carry {stack, dir, fetch}, so a caller has everything structured.
+          bake_units carry {stack, dir, fetch, resolver}, so a caller has everything
+          structured. A python unit also carries `requirements`, the pins its fetch
+          installs from `.sabot-requirements.txt`, which the caller writes beside the
+          manifest. A rust unit carries `system_packages`, the distro -dev packages its
+          Cargo.lock's -sys crates link through pkg-config. A unit with no usable
+          resolver carries `fetch: null` and a `skip_reason`, so the gap is reported
+          rather than masked.
   --bake  emit the provision command lines (`cd <dir> && <fetch>`), one per bake
           unit, for a Dockerfile RUN or an `sh -c` at image build. These are command
           content, not a standalone script: the caller runs them where Docker RUN
           semantics already provide the shell.
+
+Every fetch runs with the network up and executes NO target or dependency code: npm,
+pnpm, and yarn run with lifecycle scripts disabled, pip installs wheels only (an sdist
+build runs its setup.py), and the project itself is never built. Install scripts are
+the exfiltration vector surfaces/build.md describes, and a networked bake is where
+they would reach out.
 
 Exit: 0 ok; 2 usage; 3 not a git repo / git absent.
 """
@@ -25,37 +37,161 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 
-# manifest filename -> (stack, lockfiles, the fetch command that provisions its deps).
-# The fetch runs at image build with the network up; it reads the manifest the repo
-# already ships, so the dep set is declared, never guessed.
+# manifest filename -> (stack, lockfiles). The lockfiles are copied into the bake
+# context beside the manifest; `detect` picks the resolver from the ones present.
 MANIFESTS = {
-    "Cargo.toml": ("rust", ["Cargo.lock"], "cargo fetch"),
-    "package.json": ("node", ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"],
-                     "npm ci || npm install"),
-    "pyproject.toml": ("python", ["uv.lock", "poetry.lock", "requirements-dev.txt"],
-                       "uv sync --frozen || pip install -e '.[dev]' || true"),
-    "requirements-dev.txt": ("python", [], "pip install -r requirements-dev.txt"),
-    "go.mod": ("go", ["go.sum"], "go mod download"),
+    "Cargo.toml": ("rust", ["Cargo.lock"]),
+    "package.json": ("node", ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"]),
+    "pyproject.toml": ("python", ["uv.lock", "poetry.lock", "requirements-dev.txt"]),
+    "requirements-dev.txt": ("python", []),
+    "go.mod": ("go", ["go.sum"]),
 }
 
+# Exported for every node fetch, belt and braces beside each command's own flag: npm and
+# pnpm read `npm_config_*`, and yarn berry reads YARN_ENABLE_SCRIPTS.
+NODE_NO_SCRIPTS = "export npm_config_ignore_scripts=true YARN_ENABLE_SCRIPTS=false && "
 
-# Agentic-tooling config is not part of any target (SKILL.md, step 1), so its manifests
-# are not bake units either. Measured: platevault tracks
+# The node fetch is chosen by the lockfile the repo actually ships, not by a single
+# npm-shaped default. Measured: `npm ci || npm install` cannot provision a pnpm
+# workspace -- `npm ci` has no package-lock.json to read, and the `npm install` fallback
+# then chokes on `workspace:` protocol ranges. `pnpm fetch` reads the lockfile alone and
+# runs no lifecycle scripts, which suits a context holding no member package.json files.
+NODE_FETCH = [
+    ("pnpm-lock.yaml", "pnpm", "(corepack pnpm fetch || pnpm fetch)"),
+    ("yarn.lock", "yarn",
+     "(corepack yarn install --immutable || yarn install --frozen-lockfile --ignore-scripts)"),
+    ("package-lock.json", "npm ci", "npm ci --ignore-scripts"),
+]
+
+# The python image ships pip only, so a uv or poetry command never ran: the old
+# `uv sync --frozen || pip install -e '.[dev]' || true` died 127 on uv, failed the
+# project install on a source-free context, and `|| true` reported the bake as done.
+# `--only-binary=:all:` refuses every sdist, whose build would execute setup.py.
+PIP_INSTALL = "pip3 install --no-cache-dir --break-system-packages --only-binary=:all: -r"
+PIP_REQUIREMENTS = ".sabot-requirements.txt"
+PY_DEV_GROUPS = ("dev", "test", "tests")
+
+# Native libraries a -sys crate links through pkg-config, keyed by crate name: (Debian
+# -dev package, pkg-config module). The rust image carries none of them, because they
+# serve one kind of target, a Tauri or GTK desktop app, and every other Rust campaign
+# would pay for the stack. The ext image installs them for a target whose Cargo.lock
+# names the crate. Measured on platevault: `tauri = { features = ["wry"] }` pulls
+# webkit2gtk-sys -> gtk-sys -> glib-sys, whose build script shells `pkg-config
+# glib-2.0 >= 2.70`, and with no .pc file all 199 Tauri command handlers were NOT
+# EXECUTED. --network none leaves no run-time repair.
+SYS_CRATE_PACKAGES = {
+    "glib-sys": ("libglib2.0-dev", "glib-2.0"),
+    "gtk-sys": ("libgtk-3-dev", "gtk+-3.0"),
+    "webkit2gtk-sys": ("libwebkit2gtk-4.1-dev", "webkit2gtk-4.1"),
+    "soup3-sys": ("libsoup-3.0-dev", "libsoup-3.0"),
+}
+
+# Agentic-tooling config is not part of any target (targeting.md, Excludes), so its
+# manifests are not bake units either. Measured: platevault tracks
 # .agents/skills/react-components/package-lock.json, which made a node bake unit inside a
 # RUST ext build; the rust base carries no npm, so `npm ci` died 127 and the whole image
 # was lost -- a target's assistant config broke provisioning for its actual code.
-# Matched on the leading path segment, since these are all repo-root config dirs.
+# Matched on the leading path segment, since these are all repo-root config dirs. The
+# list is targeting.md's exclude table; TOOLING_PREFIXES covers the entries that sit
+# below a directory that is otherwise product.
 TOOLING_DIRS = (
     ".claude", ".codex", ".agents", ".cursor", ".continue", ".windsurf", ".aider",
-    ".gemini", ".opencode", ".kiro", ".amazonq", ".roo", ".cline", ".goose",
+    ".gemini", ".opencode", ".kiro", ".amazonq", ".roo", ".cline", ".goose", ".omp",
 )
+TOOLING_PREFIXES = (".github/copilot", ".apm/instructions/", ".apm/context/")
 
 
 def is_tooling_path(rel):
     """True for a path under a coding-assistant config dir rather than the product."""
-    head = rel.replace("\\", "/").split("/", 1)[0]
-    return head in TOOLING_DIRS or head.startswith(".aider")
+    norm = rel.replace("\\", "/")
+    head = norm.split("/", 1)[0]
+    return (head in TOOLING_DIRS or head.startswith(".aider")
+            or norm.startswith(TOOLING_PREFIXES))
+
+
+def node_fetch(locks):
+    for lock, resolver, cmd in NODE_FETCH:
+        if lock in locks:
+            return resolver, NODE_NO_SCRIPTS + cmd
+    return "npm install", NODE_NO_SCRIPTS + "npm install --ignore-scripts"
+
+
+def cargo_system_packages(repo, directory, locks):
+    """The SYS_CRATE_PACKAGES entries whose crate the unit's Cargo.lock names.
+
+    No lockfile means no resolved graph to read, so nothing is inferred: an unlocked
+    target's -sys crates surface as a build-script failure, not as a guessed package.
+    """
+    if "Cargo.lock" not in locks:
+        return []
+    doc, _ = _read_toml(os.path.join(repo, directory, "Cargo.lock"))
+    names = {p.get("name") for p in (doc or {}).get("package", [])}
+    return [{"crate": crate, "apt": apt, "pkg_config": pc}
+            for crate, (apt, pc) in SYS_CRATE_PACKAGES.items() if crate in names]
+
+
+def _read_toml(path):
+    try:
+        with open(path, "rb") as fh:
+            return tomllib.load(fh), None
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return None, f"unreadable: {exc}"
+
+
+def uv_lock_pins(path):
+    """`name==version` for every registry package in a uv.lock.
+
+    The project itself and path/git sources are skipped: none is on an index, and a
+    path source is target code.
+    """
+    doc, err = _read_toml(path)
+    if doc is None:
+        return None, f"uv.lock {err}"
+    pins = sorted(
+        f"{p['name']}=={p['version']}" for p in doc.get("package", [])
+        if "registry" in (p.get("source") or {}) and p.get("version")
+    )
+    return pins, None
+
+
+def pyproject_requirements(path):
+    """The declared runtime plus dev/test requirements of a PEP 621 pyproject."""
+    doc, err = _read_toml(path)
+    if doc is None:
+        return None, f"pyproject.toml {err}"
+    project = doc.get("project") or {}
+    reqs = list(project.get("dependencies") or [])
+    extras = project.get("optional-dependencies") or {}
+    groups = doc.get("dependency-groups") or {}
+    for name in PY_DEV_GROUPS:
+        reqs += extras.get(name) or []
+        # A group entry may be an `{include-group = ...}` table rather than a string.
+        reqs += [r for r in groups.get(name) or [] if isinstance(r, str)]
+    return sorted(set(reqs)), None
+
+
+def python_fetch(repo, rel, locks):
+    """(resolver, fetch, requirements, skip_reason) for one python manifest."""
+    name = os.path.basename(rel)
+    directory = os.path.dirname(rel)
+    if name == "requirements-dev.txt":
+        return "pip", f"{PIP_INSTALL} requirements-dev.txt", None, None
+    if "uv.lock" in locks:
+        reqs, err = uv_lock_pins(os.path.join(repo, directory, "uv.lock"))
+        resolver = "pip (uv.lock pins)"
+    else:
+        reqs, err = pyproject_requirements(os.path.join(repo, rel))
+        resolver = "pip (pyproject.toml requirements)"
+    if err:
+        return resolver, None, None, err
+    if not reqs:
+        why = ("no PEP 621 dependencies to install; a poetry-only manifest needs poetry, "
+               "which the python image does not ship" if "poetry.lock" in locks
+               else "no PEP 621 dependencies to install")
+        return resolver, None, None, why
+    return resolver, f"{PIP_INSTALL} {PIP_REQUIREMENTS}", reqs, None
 
 
 def tracked_files(repo):
@@ -89,7 +225,7 @@ def detect(repo):
         name = os.path.basename(rel)
         if name not in MANIFESTS or is_tooling_path(rel):
             continue
-        stack, locks, fetch = MANIFESTS[name]
+        stack, locks = MANIFESTS[name]
         directory = os.path.dirname(rel) or "."
         found_locks = [lk for lk in locks
                        if (os.path.join(directory, lk) if directory != "." else lk) in present]
@@ -98,10 +234,22 @@ def detect(repo):
             "dir": directory,
             "stack": stack,
             "lockfiles": found_locks,
-            "fetch": fetch,
         }
-        if name == "Cargo.toml":
+        if stack == "rust":
+            entry.update(resolver="cargo fetch", fetch="cargo fetch")
             entry["workspace_root"] = is_cargo_workspace(repo, rel)
+            entry["system_packages"] = cargo_system_packages(repo, directory, found_locks)
+        elif stack == "go":
+            entry.update(resolver="go mod download", fetch="go mod download")
+        elif stack == "node":
+            entry["resolver"], entry["fetch"] = node_fetch(found_locks)
+        else:
+            resolver, fetch, reqs, skip = python_fetch(repo, rel, found_locks)
+            entry.update(resolver=resolver, fetch=fetch)
+            if reqs is not None:
+                entry["requirements"] = reqs
+            if skip:
+                entry["skip_reason"] = skip
         manifests.append(entry)
 
     # Collapse Cargo workspace members: if a workspace root exists, its members are
@@ -131,10 +279,14 @@ def bake_lines(result):
     The build context is the manifest+lock only (isolation.md), so these run against
     a copied-in manifest at build time (network up), then the target is mounted
     read-only at run. These are command lines for a Dockerfile RUN or `sh -c`, not a
-    standalone script, so there is no shebang: the caller supplies the shell.
+    standalone script, so there is no shebang: the caller supplies the shell. A unit
+    with no resolver is a comment naming why, never a silently absent line.
     """
     lines = ["# provision commands from detect-stacks.py; run at image build (network up)"]
     for m in result["bake_units"]:
+        if not m["fetch"]:
+            lines.append(f"# skipped {m['manifest']}: {m['skip_reason']}")
+            continue
         cd = "" if m["dir"] == "." else f'cd "{m["dir"]}" && '
         lines.append(f"{cd}{m['fetch']}")
     return "\n".join(lines) + "\n"

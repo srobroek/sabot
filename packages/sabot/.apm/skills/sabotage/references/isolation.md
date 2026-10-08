@@ -53,26 +53,40 @@ NOT Never grant network to a scan to make it pass. That trades the isolation gua
 
 ## Container contract
 
+Every contained run goes through the wrapper, which is the canonical form:
+
 ```
-docker run --rm \
-  --network none \                 # no outbound anything; loopback DAST maps a port instead
-  --memory 2g --memory-swap 2g \   # the budget's mem cap, kernel-enforced
-  --pids-limit 512 \               # fork-bomb ceiling
-  --cpus 2 \
-  --read-only \                    # image fs is read-only
-  --tmpfs /scratch:size=2g \       # writable, RAM-backed, charged to --memory (see below)
-  --workdir /scratch \             # cwd is writable; the target is read at /target
-  --env HOME=/scratch --env TMPDIR=/scratch \
-  --env CARGO_TARGET_DIR=/artifacts/.build/cargo-target \
-  --env GOCACHE=/artifacts/.build/go-build \
-  --env GOPATH=/scratch/go --env npm_config_cache=/scratch/npm \
+$SABOT_SKILL_DIR/scripts/run-contained.sh --target <target> --artifacts <artifacts> \
+  --image sabot/rust-ext:1 --mem 2g --workdir /scratch -- \
+  cargo test --no-fail-fast --manifest-path /target/Cargo.toml
+```
+
+What it runs (`run-contained.sh`, the `docker run` near the end), abridged to the flags
+the contract rests on:
+
+```
+docker run --rm --network none \
+  --memory 2g --memory-swap 2g --pids-limit 512 --cpus 2 \
+  --read-only --tmpfs /scratch:size=2g,mode=1777,exec \
+  --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --workdir /scratch \
+  --env HOME=/scratch --env TMPDIR=/scratch/tmp --env CARGO_HOME=/scratch/cargo \
+  --env CARGO_TARGET_DIR=/artifacts/.build/cargo-target --env CARGO_NET_OFFLINE=true \
+  --env GOCACHE=/artifacts/.build/go-build --env GOPATH=/scratch/go \
+  --env npm_config_cache=/scratch/npm --env XDG_CACHE_HOME=/scratch/cache \
   --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 --env PYTHONUTF8=1 \
-  --cap-drop ALL --security-opt no-new-privileges \
-  --user 1000:1000 \               # never root
-  -v <target>:/target:ro \         # target mounted READ-ONLY
-  -v <per-run named volume>:/artifacts \   # findings; copied to the host after the run
-  <image> <campaign command reading /target, e.g. cargo test --no-fail-fast --manifest-path /target/Cargo.toml>
+  -v <target>:/target:ro -v <per-run named volume>:/artifacts \
+  <image> cargo test --no-fail-fast --manifest-path /target/Cargo.toml
 ```
+
+| Flag | What it enforces |
+|---|---|
+| `--network none` | no outbound anything; loopback DAST uses the container's own `lo` |
+| `--memory`, `--memory-swap`, `--pids-limit`, `--cpus` | the budget's caps, kernel-enforced; the pid limit is the fork-bomb ceiling |
+| `--read-only`, `--tmpfs /scratch` | the image filesystem is read-only; `/scratch` is writable, RAM-backed, and charged to `--memory` (see below) |
+| `--cap-drop ALL`, `no-new-privileges`, `--user 1000:1000` | never root, and nothing to escalate to |
+| `-v <target>:/target:ro` | the target is mounted READ-ONLY and read at `/target` |
+| the `/artifacts` named volume | findings; copied to the host after the run |
 
 MUST Mount the target read-only. The campaign reads and attacks it; it never needs to write the target, and a read-only mount makes an accidental mutation impossible.
 MUST Pass `--network none` for a fuzz or build run. A harness that needs loopback (dev-server DAST) gets a published port mapping instead, never full network.
@@ -169,11 +183,13 @@ comma-list the surface doc's Tools table names:
 | Surface image | Assert (executables) | Assert (library imports) |
 |---|---|---|
 | `sabot/rust:1` | `cargo-fuzz,cargo-audit,clippy,cargo-geiger` | none |
-| `sabot/python:1` | `bandit,ruff,semgrep` | `python3 -c "import atheris, hypothesis"` |
+| `sabot/python:1` | `bandit,ruff` | `python3 -c "import atheris, hypothesis"` |
 | `sabot/node:1` | `jazzer,retire` | `node -e 'require("fast-check")'` |
 | `sabot/go:1` | `go,gosec,golangci-lint` | none |
 | `sabot/base:1` | `opengrep,shellcheck,ripgrep,gitleaks,ast-grep,shfmt,zizmor,actionlint,trivy,osv-scanner,radamsa,zzuf,creduce,hadolint,kube-linter,tflint,poutine,trufflehog` | none |
 | `sabot/rust-extras:1` (optional) | `cargo-deny,cargo-vet,cargo-semver-checks,weggli` | none (cargo-careful and Miri are asserted by their baked sysroots, below) |
+| `sabot/scanners:1` (optional) | `checkov,guarddog,nuclei,bearer,kingfisher` | none (the baked template and rule trees, and a seeded checkov finding, are asserted as data) |
+| `sabot/heavy:1` (optional) | `joern` | none (a CPG build and a ZAP start against a writable `-dir` are asserted as work) |
 
 Each column asks a different question, and conflating them hid a real gap.
 `--assert-tools` runs `<tool> --version`, which a LIBRARY can never answer: atheris,
@@ -258,10 +274,12 @@ working bake looks like a missing db:
 cargo-audit needs none of it: it reads the baked path directly, read-only and flat.
 
 MUST Override a target's `rust-toolchain.toml` with `RUSTUP_TOOLCHAIN`. The images install
-their stable BY VERSION (`1.97.1-<triple>`) and never under the literal name `stable`, so
-a pin as ordinary as `channel = "stable"` matches nothing locally and rustup tries to
+their stable BY VERSION (`1.97.1-<triple>`) and alias only the names `stable` and
+`nightly` to the pinned toolchains (`layers/rust.sh`), so a pin to any other channel or
+version (`channel = "1.80"`, a dated nightly) matches nothing locally and rustup tries to
 install it, which needs the network and a writable `/usr/local/rustup` and has neither.
-Measured on a real crate, every cargo invocation died before doing any work:
+Measured on a real crate pinned to `stable`, before that alias existed, every cargo
+invocation died before doing any work:
 
 ```
 info: syncing channel updates for stable-aarch64-unknown-linux-gnu
@@ -314,12 +332,14 @@ MUST Set `GOPROXY=off` on the go surface. A build with an unresolved module othe
 blocks on a proxy dial that `--network none` never completes, then reports a network
 error that reads like a broken image instead of naming the missing module.
 
-This table is the same manifest `scripts/install-tools.sh --probe` asserts. The base
-image carries the cross-surface and CI/supply-chain scanners (`gitleaks`,
-`osv-scanner`, `trivy`, and the workflow-dataflow pair `zizmor`+`actionlint`, plus
-`pinact`), since a repo's `.github/workflows` and dependency manifests are read on
-every run regardless of language. A tool named here but absent from a built image
-FAILS the preflight; the campaign does not start until the image ships the full set.
+The table above is the manifest `scripts/install-tools.sh --probe` asserts (its
+`IMAGE_TOOLS_<image>` lists), and the two MUST change together. The base image carries
+the cross-surface and CI/supply-chain scanners (`gitleaks`, `osv-scanner`, `trivy`, and
+the workflow-dataflow pair `zizmor`+`actionlint`), because a repo's `.github/workflows`
+and dependency manifests are read on every run regardless of language. pinact was
+dropped: `zizmor --offline` reports the same unpinned refs. A tool named here but absent
+from a built image FAILS the preflight; the campaign does not start until the image
+ships the full set.
 
 Exit 0 means every tool answered `--version` inside the image; non-zero names
 the missing ones. Assert the complete set once, up front, so a campaign never
@@ -402,7 +422,7 @@ and the report then states that exposure was scanned with network.
   - kube-linter: loads its compiled-in checks, exit 0.
 
   See the base and infra rows of `tool-coverage-matrix.md`, which is the measured record.
-- **nuclei, ZAP** (web.md, dynamic): templates and rules fetched on use. Dynamic DAST already needs the operator to stand up the dev server, so it sits outside the default offline path.
+- **nuclei and ZAP are NOT data gaps either.** nuclei's templates are baked into `sabot/scanners:1` (pass both `-templates` and `-ud` at `/opt/sabot-db/nuclei-templates`, `surfaces/web.md`), and ZAP's passive rules ship in its bundle in `sabot/heavy:1`. What both still need is a target: dynamic DAST drives a server the campaign itself started inside the container, so it is the opt-in dev-server DAST stage rather than a default offline pass.
 
 ## Provisioning and extending the image
 
@@ -410,7 +430,8 @@ Every target-touching tool runs in the container, so the image must already hold
 what the campaign needs: the surface scanners AND the target's own dev-dependencies
 (a `cargo test` harness that pulls `proptest` cannot fetch it under `--network none`,
 so the dep must be baked in at build time). Provisioning happens once, at step 3,
-before the fan-out, while the network is available and no target code runs.
+after the user approves the proposed tool set and before the fan-out, while the network
+is available and no target code runs.
 
 **Detecting the dev-deps.** Do this deterministically with
 `scripts/detect-stacks.py`, not by hand: it lists the target's tracked files

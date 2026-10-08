@@ -133,12 +133,13 @@ def test_a_directory_is_walked_and_skip_dirs_are_ignored(tmp_path):
     assert json.loads(p.stdout)["violations"] == []
 
 
-def test_the_linter_runs_over_the_real_skill_tree_without_crashing():
-    # Whether the real tree is clean is a wiring question for files this suite does not
-    # own, so it is reported as a patch rather than asserted here.
-    p = run(str(SKILL), "--json")
-    assert p.returncode in (0, EXIT_VIOLATION), p.stderr
-    json.loads(p.stdout)
+def test_the_shipped_skill_and_agents_pass_their_own_lint():
+    # The package ships the recipes this linter forbids unless its own tree is held to
+    # them: `--metrics off` as a MUST, `cargo test` without --no-fail-fast in three run
+    # recipes, and gosec piped through tee were all live in the shipped references.
+    p = run(str(SKILL), str(SKILL.parents[1] / "agents"), "--json")
+    assert p.returncode == 0, p.stdout
+    assert json.loads(p.stdout)["violations"] == []
 
 
 def test_every_self_hit_on_the_rule_table_sits_on_a_pattern_or_message_line(tmp_path):
@@ -199,6 +200,74 @@ def test_a_commented_recipe_is_still_caught_with_include_prose(tmp_path):
     script = tmp_path / "wrap.sh"
     script.write_text("# cargo test --workspace\n")
     assert json.loads(run(str(script), "--json", "--include-prose").stdout)["violations"]
+
+
+def rules_hit(tmp_path: Path, text: str, name: str = "surface.md") -> list[str]:
+    doc = tmp_path / name
+    doc.write_text(text)
+    return [h["rule"] for h in json.loads(run(str(doc), "--json").stdout)["violations"]]
+
+
+RECIPE_TABLE = ("| Tool | Tier | Run recipe | Catches |\n"
+                "|------|------|-----------|---------|\n")
+
+
+def test_a_run_recipe_table_cell_is_a_recipe(tmp_path):
+    # The surface docs keep their commands in a Run recipe column. Skipping every table
+    # skipped exactly the cells an agent copies.
+    row = "| opengrep | default-on | `opengrep scan --metrics off --config /opt/r .` | SAST |\n"
+    assert rules_hit(tmp_path, RECIPE_TABLE + row) == ["opengrep-metrics"]
+
+
+def test_a_piped_recipe_in_a_cell_stays_one_cell(tmp_path):
+    row = "| ruff | default-on | `ruff check . | tee /artifacts/r.log` | lint |\n"
+    assert rules_hit(tmp_path, RECIPE_TABLE + row) == ["tee-swallows-status"]
+
+
+def test_a_table_column_that_is_not_a_recipe_is_still_prose(tmp_path):
+    text = ("| Tool | Notes |\n|---|---|\n"
+            "| opengrep | `opengrep scan --metrics off` exits 2, so never pass it |\n")
+    assert rules_hit(tmp_path, text) == []
+
+
+def test_an_instruction_to_run_a_forbidden_flag_is_flagged(tmp_path):
+    # `MUST Pass --metrics off` instructed the very invocation the lint forbids.
+    assert rules_hit(tmp_path, "MUST Pass `--metrics off`. Four nodes measured it.\n") == [
+        "opengrep-metrics"]
+
+
+def test_only_the_imperative_sentence_of_an_instruction_is_a_recipe(tmp_path):
+    # The sentences after a MUST explain it, and often quote the failure they prevent.
+    text = ("MUST Run `cargo test --no-fail-fast --manifest-path /target/Cargo.toml`. A "
+            "`cargo test` without it stops at the first failing binary.\n")
+    assert rules_hit(tmp_path, text) == []
+
+
+def test_a_prohibition_inside_a_fenced_spawn_prompt_is_prose(tmp_path):
+    # A brief is often a fenced prompt; its NOT lines forbid, they do not run.
+    text = ("```\nYou triage crashes.\n"
+            "NOT Never run `cargo test --workspace` without the fail-fast flag off.\n```\n")
+    assert rules_hit(tmp_path, text) == []
+
+
+@pytest.mark.parametrize("guarded", [
+    'rm -rf "${CTX:?}"',
+    "rm -rf ${probe:?}/out",
+    'cleanup() { rm -rf "${STAGE:?}"; :; }',
+])
+def test_a_colon_question_guarded_delete_is_validated_not_unexpanded(tmp_path, guarded):
+    # `${VAR:?}` aborts the shell when VAR is unset or empty: the path cannot collapse.
+    assert rules_hit(tmp_path, guarded + "\n", name="layer.sh") == []
+
+
+@pytest.mark.parametrize("unsafe", [
+    'rm -rf "${CTX}"',
+    'rm -rf "${CTX?}/x"',
+    'rm -rf "${a:?}" "$b"',
+    'rm -rf -- "$(mktemp -d)"',
+])
+def test_an_unguarded_expansion_in_any_argument_is_still_flagged(tmp_path, unsafe):
+    assert rules_hit(tmp_path, unsafe + "\n", name="layer.sh") == ["rm-rf-unexpanded"]
 
 
 # --- rule precision -----------------------------------------------------------

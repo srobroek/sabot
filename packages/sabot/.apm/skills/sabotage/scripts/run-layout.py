@@ -37,6 +37,7 @@ Stdlib only. Exit 2 usage, 3 precondition.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -52,6 +53,10 @@ EPHEMERAL_SEGMENT = "ephemeral"
 # Host-side scratch outside the target repo. A campaign spread ~1.0 GiB of residue over
 # five differently-named `~/tmp/sabot-*` dirs that nothing could enumerate; one location
 # makes orphan detection a glob. Kept under $HOME because colima mounts $HOME only.
+#
+# Each run's dir is keyed by the repo AND the run id, never the run id alone: run ids
+# such as `run-3` recur across repos, so two campaigns shared one scratch dir and a
+# teardown of one deleted the other's live files.
 HOST_SCRATCH_PARENT = ".sabot-scratch"
 
 # Paths a previous convention used for the same purpose. Teardown reports these as
@@ -85,7 +90,17 @@ def run_root(path: str | os.PathLike[str]) -> Path:
 
 
 def host_scratch(root: Path) -> Path:
-    return Path.home() / HOST_SCRATCH_PARENT / root.name
+    """`~/.sabot-scratch/<repo>-<run-id>-<hash>`, unique to this run root.
+
+    The hash is over the resolved run root, so two repos with the same directory name
+    still differ; the readable prefix is the first non-dot ancestor (the repo for the
+    usual `<repo>/.sabot/<run-id>`) so a human can tell the dirs apart.
+    """
+    owner = next((p.name for p in root.parents if p.name and not p.name.startswith(".")), "")
+    label = "-".join(s for s in (_SLUG_STRIP.sub("-", owner.lower()).strip("-"),
+                                 _SLUG_STRIP.sub("-", root.name.lower()).strip("-")) if s)
+    key = hashlib.sha256(str(root).encode()).hexdigest()[:12]
+    return Path.home() / HOST_SCRATCH_PARENT / f"{label or 'run'}-{key}"
 
 
 def paths(root: Path, node: str | None = None) -> dict[str, str]:

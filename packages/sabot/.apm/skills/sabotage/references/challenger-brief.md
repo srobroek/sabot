@@ -1,6 +1,6 @@
 # Challenger Brief Template
 
-Construct one Brief for step 11. `challenger` sets the evidence tier on every
+Construct one Brief for step 11. `sabot-challenger` sets the evidence tier on every
 finding wisp. It reads and judges, and changes nothing.
 
 Pass observable facts per finding and withhold your own conclusion, since the
@@ -10,13 +10,16 @@ isolation is what stops the challenger inheriting the gremlin's blind spots.
 
 ```
 You judge exploitability for a sabot campaign on this repository. For each
-finding, decide the evidence tier and defend it. You never edit anything.
+finding, decide the evidence tier and defend it. You never edit the repo; your
+writes are ledger stamps and scratch files under the artifacts dir.
 
 ## Scope
 - Run epic: <bead id>
 - Working directory: <repo root, or the worktree path for a ref target>
+- Surface image and per-repro timeout: sabot/<surface>:1, <repro_s>s. Replay every
+  repro through `scripts/run-contained.sh --timeout <repro_s>`, never on the host.
 - Findings to judge: discover them yourself with
-    bd list --label sab-finding --metadata-field run_id=<id> --all --json
+    bd list --label sab-finding --metadata-field run_id=<id> --all --limit 0 --json > <artifacts>/challenger-findings.json
   Judge every one lacking a `tier`.
 - Artifacts dir: <absolute path -- repro inputs and scanner output live here>
 
@@ -67,18 +70,20 @@ duplicate with reason `duplicate` and a pointer. Independent confirmation raises
 confidence in the surviving finding, and it is lost when the duplicate is deleted or
 when both rows stand as separate findings.
 
-Dedup mechanically on `dedup_key` (`<surface>:<locus>:<class>`) rather than by eye.
-Overlapping surface globs put the same locus in two nodes' scope, so the same defect
-arrives twice with two wisp ids and two titles:
+Dedup mechanically on `dedup_key` (`<locus>:<class>`, lowercased) rather than by eye.
+The key leaves the surface out on purpose: overlapping surface globs put the same
+locus in two nodes' scope, so the same defect arrives from `code` and from
+`robustness` with two wisp ids and two titles, and a surface prefix would give the
+two copies different keys. Write to this run's artifacts dir, never a shared path
+such as `/tmp/f.json`, which a concurrent campaign overwrites:
 
-    bd list --label sab-finding --metadata-field run_id=<id> --all --json > /tmp/f.json
-    jq -r '.[].metadata.dedup_key' /tmp/f.json | sort | uniq -d
+    jq -r '.[].metadata.dedup_key' <artifacts>/challenger-findings.json | sort | uniq -d
 
 Every key printed by that command is a duplicate set to collapse before you tier.
 
 An EMPTY result from it is a broken query until you have checked that the keys exist:
 
-    jq -r '[.[] | select(.metadata.dedup_key)] | length' /tmp/f.json
+    jq -r '[.[] | select(.metadata.dedup_key)] | length' <artifacts>/challenger-findings.json
 
 Zero there means the gremlins filed without the key, so `uniq -d` had nothing to compare
 and the surface reads as duplicate-free. Fall back to `locus` plus defect class, stamp
@@ -109,9 +114,10 @@ agent def, so it is stated once and cannot drift from it.
 
 ## What you write
 For each finding, stamp the wisp with a single merging `--metadata` blob (never
-`--set-metadata`, which `beads-store.md` bans because it clobbers sibling keys) and
-record the reasoning:
+`--set-metadata`, which `beads-store.md` bans because it clobbers sibling keys), move
+its state with `bd set-state`, and record the reasoning:
   bd update <wisp> --metadata '{"tier":"<TIER>","impact":"<LEVEL>","by":"challenger"}' -p <P>
+  bd set-state <wisp> state=tiered --reason "tiered <TIER> by challenger"
   bd comment <wisp> "TIERED tier=<TIER> impact=<LEVEL> by=challenger because=<one line> evidence=<file:line or command>"
 
 Set `-p` in the SAME update, from the tier-impact table in `beads-store.md`: PROVEN and
@@ -122,15 +128,16 @@ can derive it once the run ends.
 MUST Set the priority from the table every time you stamp a tier. Measured: 14 of 21 surfaces in one campaign came out entirely P2, and its two worst findings sat at P2 beside 82 MEDIUM ones, so a reader sorting by priority saw the run in no useful order.
 MUST Close a finding you REFUTE, with reason `refuted`, in the same pass that stamps the tier: `bd close <wisp> --reason refuted`. The no-delete rule keeps the wisp and its refutation; it does not ask you to leave it open. Measured: 35 of 36 REFUTED findings in one campaign were still open at report time, so a third of the run's apparently outstanding findings were ones it had already disproved.
 MUST Label a finding `non-work` when you tier it REFUTED, and when its locus is inside the run's own artifacts dir (a defect in the audit's own rules, not in the product). Both are real records and neither is a product defect. Measured: 6 audit-tooling findings were counted among the product's, and only 2 of the 6 said so in their title.
+MUST File a chain finding with `bd create ... --parent <surface> --labels sab-finding,sab-audit --no-inherit-labels`, so it does not inherit the surface node's `non-work`.
 Then read the wisp back, because a tier that failed to write leaves the report
 claiming evidence it does not have. Stamp `by=challenger` so the report marks the
 finding independently challenged; a self-tier (`by=self`) is the inline-only path in
 `workflow.md` step 11.
 
 ## Return
-The Challenger Output format from your agent definition: a verdict line with tier
-counts, a per-finding table, and the refutation rationale for anything you moved
-down.
+The thin return from your agent definition: the verdict line with the per-tier
+counts, the count of findings demoted or refuted, and a one-line note of any
+judgement gap. The per-finding tiers and rationale live on the wisps.
 ```
 
 ---

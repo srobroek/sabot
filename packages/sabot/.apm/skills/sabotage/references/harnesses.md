@@ -1,7 +1,7 @@
 # Harness patterns
 
-Authoring rules for `fuzzer`. A harness is code that feeds a target inputs and
-asserts an invariant. `fuzzer` writes it and runs nothing; `gremlin` executes it.
+Authoring rules for `sabot-fuzzer`. A harness is code that feeds a target inputs and
+asserts an invariant. `sabot-fuzzer` writes it and runs nothing; `gremlin` executes it.
 
 ## Where harnesses go
 
@@ -70,7 +70,7 @@ entry point, and assert no panic. Add a round trip when a renderer exists. Seed
 from every fixture in the repo's testdata.
 
 **CLI or hook.** Use the shipped `scripts/fuzz-cli.py` rather than writing a new
-harness. `fuzzer`'s job here is the vectors file. Run `fuzz-cli.py --vectors-help`
+harness. `sabot-fuzzer`'s job here is the vectors file. Run `fuzz-cli.py --vectors-help`
 for the authoritative schema; do not infer it from the script.
 
 Each vector is one JSON object with four fields:
@@ -111,11 +111,13 @@ not expected; corruption is the finding.
 with a clear message rather than a traceback. Startup denial from a bad config is a
 real robustness finding.
 
-**Agent or skill definition.** No executable harness exists. `fuzzer` writes a
-scenario table crossing each payload class from
+**Agent or skill definition.** No in-container executable harness exists; the
+opt-in live-spawn stage (`agentic-fuzz.md`) is the only route that runs the
+definition for real, under its own consent. `sabot-fuzzer` writes a scenario table crossing each payload class from
 `references/corpora/prompt-injection.md` against each entry point where untrusted
-content enters, and `gremlin` evaluates whether the definition contains a rule
-that stops it.
+content enters, and `gremlin` records whether the definition contains a rule that
+addresses it. That record is a hypothesis capped at REACHABLE; only a live-spawn case
+shows whether the agent holds to the rule.
 
 ## Seed corpus
 
@@ -136,7 +138,7 @@ DEFAULT Name it for the bug rather than the input, so a future reader knows what
 ## Synthesized rules as regression guards
 
 A rule recon wrote and a finding confirmed belongs in the repo's own lint config,
-not only in the campaign's artifacts. It is the cheapest durable check the campaign
+not only in the campaign's artifacts, once the step-15 approval covers it. It is the cheapest durable check the campaign
 can leave behind, because it runs on every commit at no further cost.
 
 | Artifact | Proves | Catches |
@@ -144,9 +146,9 @@ can leave behind, because it runs on every commit at no further cost.
 | Regression test | this instance is fixed | this exact input returning |
 | Graduated rule | the pattern is banned | the next instance, anywhere in the repo |
 
-MUST Write both for a confirmed finding: the test for the instance, and the rule for the class.
-MUST Place the rule where the project's own tooling already looks, per the graduation table in `recon.md`.
-NOT A rule left only in the artifacts dir stops running the moment the campaign ends, so it guards nothing.
+MUST Write the regression test for a confirmed finding, and propose its rule for the class at the step-15 approval.
+MUST Place an approved rule where the project's own tooling already looks, per the graduation table in `recon.md`, and only once the step-15 approval names it: the lint config is product configuration that steps 1 to 14 leave untouched.
+NOT A rule left only in the artifacts dir stops running the moment the campaign ends, so the report proposes it rather than letting it lapse.
 
 ## Anti-patterns
 

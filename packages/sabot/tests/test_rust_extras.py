@@ -97,23 +97,21 @@ def test_the_baked_advisory_db_is_a_shallow_clone_that_keeps_its_git_dir():
         "the campaign runs as uid 1000 against a root-owned repo; git refuses it"
 
 
-def test_the_rust_layer_bakes_the_gtk_stack_a_tauri_target_needs_to_compile():
-    """A Tauri crate cannot COMPILE without these, so their absence is not a lint gap.
+def test_the_rust_layer_leaves_the_tauri_gtk_stack_to_the_ext_image():
+    """Only a Tauri target needs the GTK/webkit stack, so the rust image no longer bakes it.
 
     Measured on platevault: `tauri = { features = ["wry"] }` pulls webkit2gtk-sys ->
-    gtk-sys -> glib-sys, whose build script shells `pkg-config glib-2.0 >= 2.70`. The
-    image carried /usr/bin/pkg-config and zero matching .pc files, so all 199 Tauri
-    command handlers were NOT EXECUTED and `--network none` left no runtime repair. The
-    target's own tests already wire tauri's `test` feature to a MockRuntime, so this apt
-    line was the whole distance between 0 and 134 handlers executable.
+    gtk-sys -> glib-sys, whose build script shells `pkg-config glib-2.0 >= 2.70`; with no
+    .pc file all 199 Tauri command handlers were NOT EXECUTED. build-ext-image.sh now
+    installs the stack for a target whose Cargo.lock names those crates and asserts
+    pkg-config resolves it (test_build_ext_image.py), so every other Rust campaign stops
+    carrying four desktop libraries.
     """
     rust = (SKILL / "references/containers/layers/rust.sh").read_text()
     for pkg in ("libglib2.0-dev", "libgtk-3-dev", "libwebkit2gtk-4.1-dev",
                 "libsoup-3.0-dev"):
-        assert pkg in rust, f"the rust layer no longer installs {pkg}"
-    # pkg-config EXISTING is what made the gap invisible; assert the .pc files RESOLVE.
-    assert 'pkg-config --exists "$pc"' in rust, \
-        "assert pkg-config resolves the stack, not merely that the binary answers"
+        assert pkg not in rust, f"the rust layer still installs {pkg}"
+    assert "pkg-config" in rust, "the -sys crates of every target still need pkg-config"
     assert "--component rustfmt" in rust, \
         "cargo-fmt was absent for toolchain 1.97.1, so a fmt check read as a tool gap"
 

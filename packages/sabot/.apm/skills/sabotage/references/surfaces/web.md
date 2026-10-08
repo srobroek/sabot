@@ -20,7 +20,7 @@ frontend with native IPC behind it.
 | eslint-plugin-security + no-unsanitized | default-on | local | `npx eslint --format json .` with the plugins | `innerHTML`, `dangerouslySetInnerHTML`, `document.write`, `eval`, `javascript:` URLs | project-local; the DOM-sink detector `code.md` lacks |
 | opengrep js/ts pack | default-on | local | `opengrep --config /opt/sabot-db/semgrep-rules/javascript --config /opt/sabot-db/semgrep-rules/typescript --config /opt/sabot-db/semgrep-rules/html --json <files>` (173 + 30 + 6 baked rules, XSS rules included) | reflected and stored XSS patterns, template injection | **baked, offline.** Never `p/xss` or `p/javascript`: a registry shorthand resolves over the network and exits `OG_RC=2` under `--network none`, scanning nothing |
 | retire.js | default-on | local | `npx retire --outputformat json` | known-vulnerable JS libraries shipped in the bundle | complements osv-scanner with browser-lib CVEs |
-| nuclei | opt-in | dynamic | `nuclei -u <local-url> -json -o <artifacts>/nuclei.json` | live findings against the running app: headers, exposures, known CVEs | dynamic; needs the dev server up |
+| nuclei | opt-in | dynamic | `nuclei -u <local-url> -templates /opt/sabot-db/nuclei-templates -ud /opt/sabot-db/nuclei-templates -duc -json -o <artifacts>/nuclei.json` | live findings against the running app: headers, exposures, known CVEs | dynamic; needs the dev server up. **Templates baked in `sabot/scanners:1`**: pass both `-templates` and `-ud` at the baked tree, since `-templates` alone resolves `helpers/` payloads outside it and roughly 5000 templates fail to compile (`tool-coverage-matrix.md`) |
 | ZAP baseline | opt-in | dynamic | `zap-baseline.py -t <local-url> -J <artifacts>/zap.json` | passive scan: CSP, cookie flags, missing headers, mixed content | dynamic; passive by default |
 | Playwright probe | opt-in | dynamic | `require("playwright")` from `NODE_PATH`, `chromium.launch({args:["--no-sandbox"]})`, driven per `harnesses.md` | DOM XSS that only fires after render, `postMessage` origin gaps | **chromium is baked into `sabot/node:1`** and launches offline against `127.0.0.1`. Pass `--no-sandbox`, because chromium's sandbox needs privileges the container drops, and keep the `TMPDIR` that `run-contained.sh` points at the `/scratch` tmpfs, since the root filesystem is read-only. Missing either fails at `launch()` |
 
@@ -68,7 +68,7 @@ NOT Never scan a staging, production, or shared URL, even one the user pastes. T
 **Static** doesn't need a server: run the eslint/opengrep/retire.js tools and trace DOM
 sinks by reading, exactly like `code.md`.
 
-**Dynamic** drives the running instance. `fuzzer` writes the scan config and, when
+**Dynamic** drives the running instance. `sabot-fuzzer` writes the scan config and, when
 DOM XSS needs render, a Playwright script that loads a page, injects a marker into
 each input, and asserts the marker never reaches `document` as script. `gremlin`
 starts the server, then runs the scan and tears it down per the section above.

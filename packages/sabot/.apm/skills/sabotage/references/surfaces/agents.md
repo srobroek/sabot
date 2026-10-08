@@ -43,11 +43,10 @@ MUST Scan the user's agentic-tooling config only when the user names the path as
 | Tool | Tier | Class | Run recipe | Catches | Overlap |
 |------|------|-------|-----------|---------|---------|
 | `scripts/fuzz-cli.py` | default-on | local | corpus mode against a hook or MCP server, see `harnesses.md` | a hook or server that crashes, hangs, or misparses a payload | the only executable check on this surface |
-| `references/agentic-fuzz.md` (promptfoo) | opt-in | local | `npx --yes promptfoo@latest redteam generate` then `eval` against a real-invocation target script | generated attacks that LAND: repo-prompt-injection, verifier-sabotage, sandbox escape, MCP abuse | needs a model to generate and grade; the target itself is a local script |
-| `references/corpora/prompt-injection.md` | default-on | local | `fuzzer` builds scenarios from it; `gremlin` runs them against the target definition | instruction override, exfil paths, tool coercion | the payload source of truth |
+| `references/corpora/prompt-injection.md` | default-on | local | `sabot-fuzzer` builds scenarios from it; `gremlin` runs them against the target definition | instruction override, exfil paths, tool coercion | the payload source of truth |
 | semgrep (recon-synthesized) | opt-in | local | `sabot-scout` writes rules for the code side during recon (see the agentic pattern list below), then `opengrep --config <rule> --json <files>` | a prompt assembled by string concatenation, an unpinned MCP `@latest` server, a secret committed in an agent config | no registry pack covers these agentic patterns, so recon synthesizes them per repo |
 | `jq` schema read | default-on | local | `jq '.permissions, .hooks, .mcpServers' <settings.json>` | over-broad allowlists, wildcard permissions, unpinned MCP servers | mechanical, so it needs no judgement |
-| gitleaks | default-on | local | `gitleaks detect --no-git --report-format json` | credentials in an MCP config or agent definition | overlaps the repo's own `secrets-scan` package, which is preferred when present |
+| gitleaks | default-on | local | `gitleaks dir --report-format json .` | credentials in an MCP config or agent definition | overlaps the repo's own `secrets-scan` package, which is preferred when present |
 | agentic-radar | opt-in | local | `uvx agentic-radar` | a static map of an agentic system's tools and flows | upstream quiet since 2025-11 |
 | opengrep (ToB pack) | opt-in | **network stage only** | `opengrep --config p/trailofbits --json <files>` | agent-adjacent code patterns the shipped ruleset misses | **not baked and registry-only**, so it cannot run in the offline campaign at all. Defer it to the network stage (`references/network-stage.md`) or record it NOT EXECUTED, requires network |
 | snyk-agent-scan | default-on | local | `uvx snyk-agent-scan <config-path>` | MCP tool poisoning, cross-origin escalation, rug-pull patterns | static, so no LLM gate; the only executable scanner for MCP configs |
@@ -98,7 +97,7 @@ MUST Have `sabot-scout` synthesize these as validated rules during recon, and tr
 
 This surface has a definition-review harness and a hook-and-server-execution harness.
 
-**Definition review.** `fuzzer` builds a scenario table from
+**Definition review.** `sabot-fuzzer` builds a scenario table from
 `references/corpora/prompt-injection.md`, one row per payload class crossed with
 each entry point where untrusted content enters. `gremlin` evaluates each against
 the definition and records whether the definition contains a rule that would stop

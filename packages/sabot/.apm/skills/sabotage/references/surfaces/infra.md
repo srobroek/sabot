@@ -25,12 +25,12 @@ lockfiles (`Cargo.lock` `package-lock.json` `pnpm-lock.yaml` `uv.lock` `go.sum`
 | hadolint | default-on | local | `hadolint -f json <Dockerfile>` | root user, unpinned base image, unsafe `RUN`, missing `HEALTHCHECK` | embeds shellcheck for `RUN` bodies |
 | kube-linter | default-on | local | `kube-linter lint --format json <path>` | missing limits, privileged containers, `runAsNonRoot`, host mounts | k8s only |
 | tflint | default-on | local | `tflint -f json` | provider-aware Terraform errors | complements the policy scanners |
-| gitleaks | default-on | local | `gitleaks dir --report-format json .` for the working tree, AND `gitleaks git --report-format json .` for history. **Verify the history pass saw commits**: in a worktree, `.git` is a pointer file outside the mount, so `gitleaks git` scans 0 commits and exits 0 | committed credentials | the repo's `secrets-scan` package is preferred when present |
-| grype | opt-in | global | `grype dir:. -o json` | container image and SBOM CVEs | overlaps trivy's vuln scanner |
+| gitleaks | default-on | local | `gitleaks dir --report-format json .` for the working tree, AND `gitleaks git --report-format json .` for history. **Verify the history pass saw commits**: in a worktree, `.git` is a pointer file outside the mount, so `gitleaks git` scans 0 commits and exits 0 | committed credentials | the repo's `secrets-scan` package is preferred when present <!-- lint-recipes: allow (git mode is the history pass, and the row says to verify its commit count) --> |
+| ~~grype~~ | declined | - | - | container image and SBOM CVEs | **not installed.** Its DB measures 2.0GB and base is inherited by every surface, so the bake was declined; trivy and osv-scanner cover the same ecosystems (`tool-coverage-matrix.md`) |
 | conftest | opt-in | local | `conftest test --output json <files>` | custom Rego policy, useful only when the repo ships policies | none |
 
 MUST Prefer the repo's own `dep-audit` and `secrets-scan` packages when they exist, and run these scanners only to fill what those leave uncovered.
-MUST Treat `osv-scanner` and `grype` as global class, so a scoped run skips them and the report states that skip.
+MUST Treat `osv-scanner` as global class, so a scoped run skips it and the report states that skip.
 
 ## Attack checklist
 
@@ -62,7 +62,7 @@ that parser goes through `scripts/fuzz-cli.py`, since a crash on malformed confi
 is a startup denial.
 
 **Policy assertion.** When the repo ships Rego or custom scanner policies,
-`fuzzer` writes fixtures that should fail each policy, and `gremlin` confirms the
+`sabot-fuzzer` writes fixtures that should fail each policy, and `gremlin` confirms the
 policy actually rejects them. A policy that passes everything is a silent gap, and
 it looks identical to a compliant repo.
 
@@ -82,7 +82,7 @@ it looks identical to a compliant repo.
 | `0.0.0.0/0` on a security group | the port serves a public web endpoint by design |
 | A container without `USER` | the image is a build stage discarded before the final image |
 | An unpinned action | it is a first-party action in the same repository, so the tag and the code share a trust boundary |
-| A CVE reported by a scanner | the vulnerable function is never called, which the report states as REACHABLE rather than PROVEN |
+| A CVE reported by a scanner | no traced path reaches the vulnerable function, so the finding is HARDENING (scanner evidence alone), and REFUTED once a trace shows no entry point calls it. REACHABLE needs a traced path from a named entry point |
 | `${{ }}` inside a workflow | the interpolated field is repo-controlled, such as `github.repository` or a `vars` entry, rather than attacker-supplied |
 | Missing encryption on a bucket | the account or provider default enforces it, which the report cites as the mitigating control |
 | A hardcoded secret in a fixture | the file is a test fixture with a value the scanner's allowlist covers, and the value is not live |

@@ -80,6 +80,18 @@ def test_zap_uses_the_core_zip():
     assert "Linux.tar.gz" not in BODY
 
 
+def test_the_zap_zip_is_checksum_verified_before_it_is_unpacked():
+    """ZAP ships no checksum file, so an unverified 108MB zip ran in an auditor's image."""
+    pin = re.search(r"^ZAP_CORE_SHA256=([0-9a-f]+)$", BODY, re.M)
+    assert pin and len(pin.group(1)) == 64, "pin the Core zip's SHA-256 in the layer"
+    verify = BODY.find('echo "${ZAP_CORE_SHA256}  /tmp/zap.zip" | sha256sum -c --strict -')
+    assert verify != -1, "verify /tmp/zap.zip against the pinned digest"
+    assert BODY.index("curl -fsSL -o /tmp/zap.zip") < verify < BODY.index(
+        "unzip -q /tmp/zap.zip"), "verify after the download and before the unzip"
+    # The digest pin is not a renovate-tracked version: a bump must fail on it.
+    assert not re.search(r"# renovate:[^\n]*\nZAP_CORE_SHA256=", BODY)
+
+
 def test_permissions_are_fixed_after_the_last_write():
     """A chmod before the probe leaves its new $HOME state root-only for uid 1000."""
     probe = BODY.index("joern-parse")

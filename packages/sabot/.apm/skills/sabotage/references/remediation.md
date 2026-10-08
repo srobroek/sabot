@@ -67,16 +67,19 @@ among its weakest.
 ### Ticket body
 
 The body has to survive the session, so it carries the evidence rather than
-referring to it. Every field comes from the finding bead.
+referring to it. Every field comes from the finding bead: its title, or a metadata key
+the finding schema in `beads-store.md` defines and `report-json.py` keeps. A key no
+agent stamps renders as a blank section, which reads as a ticket with nothing to say.
 
 | Section | Content | From |
 |---|---|---|
-| title | the defect in one line, no tier prefix | `short_summary` |
+| title | the defect in one line, no tier prefix | the finding bead's title |
 | tier and impact | both axes, stated plainly | `tier`, `impact` |
-| location | every `file:line` instance | `evidence` |
-| reproduction | the exact command and expected exit code | `repro_cmd`, `repro_rc` |
-| why it matters | the failure scenario, in concrete inputs and outcome | `failure_scenario` |
-| proposed fix | what to change and where, without a patch attached | `root_cause` |
+| location | every `file:line` instance, one per finding sharing the root cause | `locus` |
+| evidence | the artifact or exact command that shows the defect | `evidence` |
+| reproduction | the exact command and expected exit code, plus the minimized input | `repro_cmd`, `repro_rc`, `repro` |
+| why it matters | the reachability chain from entry point to sink, in concrete inputs and outcome | `path` |
+| proposed fix | what to change and where, without a patch attached, written at render time from the shared defect | `root_cause` |
 | verification | how the fixer proves it closed | the harden route's before/after |
 | provenance | the run epic and finding bead ids | beads |
 

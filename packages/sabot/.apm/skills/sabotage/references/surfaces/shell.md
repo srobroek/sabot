@@ -8,9 +8,11 @@ own guards came from command-position anchoring, quoting, or fail-open inversion
 ## Detect
 
 `*.sh`, `*.bash`, `*.zsh`, files whose shebang matches `#!/.*\b(ba|z|k)?sh\b`,
-`.claude/hooks/**`, `.codex/hooks/**`, `.git/hooks/**`, `.pre-commit-config.yaml`
-entries with inline shell, `run:` blocks in CI workflows, and any Python or Node
-script that shells out through `subprocess`, `os.system`, or `child_process`.
+`.claude/hooks/**`, `.codex/hooks/**`, `.git/hooks/**`, OMP extensions (`*.ts` under
+`.omp/extensions/` or a plugin's `extensions/`) that register a `pi.on("tool_call", …)`
+gate, `.pre-commit-config.yaml` entries with inline shell, `run:` blocks in CI
+workflows, and any Python or Node script that shells out through `subprocess`,
+`os.system`, or `child_process`.
 
 A hook written in Python still belongs here when it parses shell command strings:
 the surface is the decision, not the language.
@@ -58,6 +60,7 @@ the target. That is the guard working, not a test failure, but it blocks authori
 | File over command line | write vectors and probes to a file with the Write tool, never a heredoc or inline Bash; `fuzz-cli.py` reads the file | the default; the payload stays data in a file |
 | Subprocess over tool call | `fuzz-cli.py` invokes the guard as a subprocess with the payload on stdin, so the payload never becomes a Bash TOOL CALL and no PreToolUse hook sees it | always true of the harness itself |
 | Hook-free session | run the campaign under `claude --bare` (skips hooks) or a `--settings` file with no hooks, in a scratch dir outside the guarded repo | when even authoring trips the live guard |
+| Handler over stdin, for an OMP `tool_call` gate | an OMP gate is an in-process TS extension with no stdin, so `fuzz-cli.py` cannot drive it. Import its default export in a `bun test` harness, pass a stub `pi` whose `on("tool_call", fn)` captures the handler, and call that handler with each vector from the file as `{ toolName, input }`: `{ block: true }` is deny, `undefined` is allow, and a returned `input` is a rewrite to re-check. Author the campaign under `omp --no-extensions` when the deployed gate trips authoring | the target is an OMP `tool_call` gate |
 
 MUST Write attack payloads to a file rather than into a Bash command line, since the live guard inspects the command line and a catastrophic-looking payload is denied before the target sees it.
 NOT Never disable the deployed guard in place to make room for the campaign. Use a hook-free session or a scratch dir; the guard protecting the working session is not the target.
@@ -65,7 +68,9 @@ NOT Never disable the deployed guard in place to make room for the campaign. Use
 ## Harness patterns
 
 Every hook and CLI goes through the shipped `scripts/fuzz-cli.py`, which asserts
-these invariants and reports a violation as a finding:
+these invariants and reports a violation as a finding. An OMP `tool_call` gate has no
+stdin, so its `bun test` harness (the route above) asserts the same invariants on the
+handler's return:
 
 | Invariant | Violation is |
 |---|---|
@@ -76,7 +81,7 @@ these invariants and reports a violation as a finding:
 | Exit code matches the documented contract | a caller misreading the result |
 
 Seed the corpus with the target's own test fixtures, then add the wrapper and
-quoting mutations from the checklist. `fuzzer` writes the attack-vector list;
+quoting mutations from the checklist. `sabot-fuzzer` writes the attack-vector list;
 `gremlin` runs it.
 
 ## Impact calibration

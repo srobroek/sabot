@@ -158,6 +158,94 @@ def test_a_tool_this_script_was_never_taught_still_counts_its_files(tmp_path):
     assert json.loads(r.stdout)["files_scanned"] == 2
 
 
+# --- unreported coverage is not zero coverage --------------------------------
+
+
+def writes(tmp_path: Path, out: Path, doc, rc: int = 0) -> Path:
+    """A fake scanner that writes `doc` as JSON to `out` and exits `rc`."""
+    return fake_scanner(
+        tmp_path, f"cat > {out} <<'EOF'\n" + json.dumps(doc) + f"\nEOF\nexit {rc}\n")
+
+
+def test_a_clean_shellcheck_report_is_unreported_coverage_not_not_executed(tmp_path):
+    # shellcheck's and ast-grep's clean JSON is `[]`: no finding, and no field for the files
+    # read. It scored 0 files, so every clean scan from either tool read as NOT EXECUTED.
+    out = tmp_path / "sc.json"
+    r = run("--output", str(out), "--tool", "shellcheck", "--json", "--",
+            str(writes(tmp_path, out, [])))
+    assert r.returncode == 0, r.stdout + r.stderr
+    doc = json.loads(r.stdout)
+    assert doc["verdict"] == "executed"
+    assert doc["coverage_reported"] is False
+    assert doc["files_scanned"] is None
+    assert "UNREPORTED" in doc["message"]
+
+
+def test_a_clean_trivy_report_with_no_results_is_unreported_coverage(tmp_path):
+    out = tmp_path / "trivy.json"
+    clean = {"SchemaVersion": 2, "ArtifactName": ".", "ArtifactType": "filesystem"}
+    r = run("--output", str(out), "--tool", "trivy", "--json", "--",
+            str(writes(tmp_path, out, clean)))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(r.stdout)["coverage_reported"] is False
+
+
+def test_a_clean_bandit_report_counts_the_files_in_its_metrics(tmp_path):
+    # bandit lists every scanned file under `metrics`, findings or not.
+    out = tmp_path / "bandit.json"
+    clean = {"errors": [], "results": [], "metrics": {
+        "./a.py": {"loc": 3, "nosec": 0}, "./b.py": {"loc": 9, "nosec": 0},
+        "_totals": {"loc": 12, "nosec": 0}}}
+    r = run("--output", str(out), "--tool", "bandit", "--json", "--",
+            str(writes(tmp_path, out, clean)))
+    assert r.returncode == 0, r.stdout + r.stderr
+    doc = json.loads(r.stdout)
+    assert doc["files_scanned"] == 2
+    assert doc["coverage_reported"] is True
+
+
+def test_a_bandit_report_over_no_file_is_still_not_executed(tmp_path):
+    out = tmp_path / "bandit.json"
+    empty = {"errors": [], "results": [], "metrics": {"_totals": {"loc": 0, "nosec": 0}}}
+    r = run("--output", str(out), "--tool", "bandit", "--",
+            str(writes(tmp_path, out, empty)))
+    assert r.returncode == EXIT_NOT_EXECUTED
+    assert "0 file(s) scanned" in r.stderr
+
+
+def test_an_errors_only_report_is_not_positive_work(tmp_path):
+    # The file named in an error is the file the scanner could NOT read.
+    out = tmp_path / "scan.json"
+    errors_only = {"errors": [{"path": "bad.py", "type": "SyntaxError"}], "results": []}
+    r = run("--output", str(out), "--tool", "opengrep", "--",
+            str(writes(tmp_path, out, errors_only)))
+    assert r.returncode == EXIT_NOT_EXECUTED, r.stdout + r.stderr
+    assert "error(s)" in r.stderr
+
+
+def test_an_errored_file_does_not_add_to_a_findings_based_count(tmp_path):
+    out = tmp_path / "scan.json"
+    doc = {"results": [{"path": "a.py"}], "errors": [{"path": "bad.py"}]}
+    r = run("--output", str(out), "--json", "--", str(writes(tmp_path, out, doc)))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(r.stdout)["files_scanned"] == 1
+
+
+def test_unreported_coverage_at_a_nonzero_exit_is_not_executed(tmp_path):
+    out = tmp_path / "sc.json"
+    r = run("--output", str(out), "--tool", "shellcheck", "--",
+            str(writes(tmp_path, out, [], rc=3)))
+    assert r.returncode == EXIT_NOT_EXECUTED
+
+
+def test_unreported_coverage_cannot_meet_an_explicit_file_threshold(tmp_path):
+    out = tmp_path / "sc.json"
+    r = run("--output", str(out), "--min-files", "3", "--",
+            str(writes(tmp_path, out, [])))
+    assert r.returncode == EXIT_NOT_EXECUTED
+    assert "--min-files 3" in r.stderr
+
+
 # --- exit-code discipline ---------------------------------------------------
 
 

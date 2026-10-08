@@ -163,6 +163,46 @@ def test_dep_cache_is_persistent_not_scratch(tmp_path):
     assert "/scratch" not in df
 
 
+TAURI_LOCK = "".join(
+    f'[[package]]\nname = "{name}"\nversion = "0.1.0"\n\n'
+    for name in ("app", "glib-sys", "gtk-sys", "webkit2gtk-sys", "soup3-sys", "serde")
+)
+
+
+def test_a_tauri_target_gets_its_gtk_stack_in_the_ext_image(tmp_path):
+    """The GTK/webkit stack moved out of the rust image into the ext layer.
+
+    A Tauri crate cannot COMPILE without it: glib-sys shells `pkg-config glib-2.0`, and
+    with no .pc file 199 platevault handlers were NOT EXECUTED. Every other Rust target
+    paid for the stack, so only a target whose lock names the -sys crates installs it.
+    """
+    make_repo(tmp_path, {"Cargo.toml": "[package]\nname='app'\n", "Cargo.lock": TAURI_LOCK})
+    df = dry_run(tmp_path)
+    lines = df.splitlines()
+    apt = next((i for i, l in enumerate(lines) if "apt-get install" in l), None)
+    assert apt is not None, df
+    for pkg in ("libglib2.0-dev", "libgtk-3-dev", "libwebkit2gtk-4.1-dev",
+                "libsoup-3.0-dev"):
+        assert pkg in lines[apt], f"{pkg} missing from {lines[apt]}"
+    # Installed as root, before the build drops to the fetch uid.
+    assert apt < lines.index("USER 1000:1000")
+    assert lines.index("USER root") < apt
+    # pkg-config RESOLVING each module is the assertion; the binary answering was not.
+    assert 'pkg-config --exists "$pc"' in df
+    for pc in ("glib-2.0", "gtk+-3.0", "webkit2gtk-4.1", "libsoup-3.0"):
+        assert pc in df
+
+
+def test_a_plain_rust_target_installs_no_system_packages(tmp_path):
+    make_repo(tmp_path, {"Cargo.toml": "[package]\nname='x'\n", "Cargo.lock": ""})
+    assert "apt-get" not in dry_run(tmp_path)
+
+
+def test_a_skipped_rust_unit_contributes_no_system_packages(tmp_path):
+    make_repo(tmp_path, {"Cargo.toml": "[package]\nname='app'\n", "Cargo.lock": TAURI_LOCK})
+    assert "apt-get" not in dry_run(tmp_path, stack_skip="rust")
+
+
 @pytest.fixture
 def stub_docker(tmp_path):
     """A fake `docker` on PATH: image inspect ok, build records its argv to a file."""
@@ -219,3 +259,74 @@ def test_help_prints_usage_and_exits_zero():
 def test_unknown_arg_still_exits_2():
     r = subprocess.run(["bash", str(SCRIPT), "--bogus"], capture_output=True, text=True)
     assert r.returncode == 2
+
+
+def _runs(df):
+    return [l for l in df.splitlines() if l.startswith("RUN ") and "mkdir -p /deps" not in l]
+
+
+@pytest.mark.parametrize("lock", ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", None])
+def test_node_fetch_runs_no_install_scripts(tmp_path, lock):
+    # The bake runs with the network on, so a lifecycle script there is the install-time
+    # exfil vector surfaces/build.md describes. Every node resolver must disable them.
+    files = {"package.json": '{"name":"x"}'}
+    if lock:
+        files[lock] = "{}"
+    make_repo(tmp_path, files)
+    (run,) = _runs(dry_run(tmp_path, base="sabot/node:1", tag="sabot/node-ext:1"))
+    assert "npm_config_ignore_scripts=true" in run, run
+    assert "YARN_ENABLE_SCRIPTS=false" in run, run
+    if lock in ("package-lock.json", None):
+        assert "--ignore-scripts" in run, run
+
+
+def test_python_bake_installs_wheels_only_and_never_builds_the_project(tmp_path):
+    # The old fetch was `uv sync --frozen || pip install -e '.[dev]' || true`: uv is not in
+    # the image, `-e .` builds the project (target code) from a source-free context, and
+    # `|| true` reported every failure as a provisioned stack.
+    make_repo(tmp_path, {
+        "pyproject.toml": "[project]\nname='x'\ndependencies=['requests>=2']\n"
+                          "[project.optional-dependencies]\ndev=['pytest==8.0']\n",
+    })
+    r = subprocess.run(
+        ["bash", str(SCRIPT), "--target", str(tmp_path), "--base", "sabot/python:1",
+         "--tag", "t", "--dry-run"],
+        capture_output=True, text=True, env=dict(os.environ, SABOT_STACK_SKIP=""),
+    )
+    assert r.returncode == 0, r.stderr
+    (run,) = _runs(r.stdout)
+    assert "--only-binary=:all:" in run and ".sabot-requirements.txt" in run, run
+    assert "|| true" not in run and "-e " not in run and "uv " not in run, run
+    assert "COPY --chown=1000:1000 pyproject.toml .sabot-requirements.txt ./" in r.stdout
+    assert "via pip (pyproject.toml requirements)" in r.stderr
+
+
+def test_python_unit_with_no_resolver_is_reported_not_emitted(tmp_path):
+    make_repo(tmp_path, {"pyproject.toml": "[tool.poetry]\nname='x'\n", "poetry.lock": ""})
+    r = subprocess.run(
+        ["bash", str(SCRIPT), "--target", str(tmp_path), "--base", "sabot/python:1",
+         "--tag", "t", "--dry-run"],
+        capture_output=True, text=True, env=dict(os.environ, SABOT_STACK_SKIP=""),
+    )
+    assert r.returncode == 0, r.stderr
+    assert not _runs(r.stdout), r.stdout
+    assert "skipped pyproject.toml" in r.stderr and "poetry" in r.stderr
+
+
+def test_build_removes_its_temp_context(tmp_path, stub_docker):
+    # `exec docker build` replaced the shell, so the EXIT trap never ran and every real
+    # build left a bs-ext-* context behind.
+    dk, _ = stub_docker
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    make_repo(repo, {"go.mod": "module x\n", "go.sum": ""})
+    tmp = tmp_path / "tmp"
+    tmp.mkdir()
+    env = dict(os.environ, PATH=f"{dk.parent}:{os.environ['PATH']}", TMPDIR=str(tmp))
+    r = subprocess.run(
+        ["bash", str(SCRIPT), "--target", str(repo),
+         "--base", "sabot/base:1", "--tag", "sabot/base-ext:1"],
+        capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    assert not list(tmp.glob("bs-ext-*")), "temp build context leaked"

@@ -110,10 +110,10 @@ codex: $sabotage find security holes in my repo's ci/cd pipeline
 It runs a five-agent campaign per surface:
 
 1. sabot-scout: recon per surface, producing the trust map, invariants, idiom census, and repo-specific rules
-2. fuzzer: writes harnesses, seed corpora, and attack vectors
+2. sabot-fuzzer: writes harnesses, seed corpora, and attack vectors
 3. gremlin: executes scanners and harnesses inside a container, reads for what they miss
 4. triager: dedups crashes, minimizes to a smallest reproducing input, classifies
-5. challenger: sets the evidence tier on every finding, independently
+5. sabot-challenger: sets the evidence tier on every finding, independently
 
 A sixth agent, hardener, applies an approved fix and re-verifies, only after you
 say so.
@@ -131,12 +131,12 @@ flowchart TB
     Q --> OPEN["<b>Open the run</b> · epic + one node per surface<br/>provision images, read the repo's security config, pre-pass"]
 
     OPEN --> SCOUT["<b>sabot-scout</b> · trust map, invariants, repo-specific rules"]
-    SCOUT --> FUZZER["<b>fuzzer</b> · harnesses, corpora, vectors"]
+    SCOUT --> FUZZER["<b>sabot-fuzzer</b> · harnesses, corpora, vectors"]
     FUZZER --> GREMLIN["<b>gremlin</b> · runs it all in a container, reads for the rest"]
 
     GREMLIN -->|crashes| TRIAGER["<b>triager</b> · dedup, minimize,<br/>memory-safety vs robustness"]
     GREMLIN -->|findings| CHAL
-    TRIAGER --> CHAL["<b>challenger</b> · sets the evidence tier<br/><i>demotes, never deletes</i>"]
+    TRIAGER --> CHAL["<b>sabot-challenger</b> · sets the evidence tier<br/><i>demotes, never deletes</i>"]
 
     CHAL --> REPORT["<b>Report</b> · tier + impact + file:line, citing bead ids"]
     SKIP["missing tool · crashed scanner · budget cap"] -.->|"a coverage gap,<br/>never a clean result"| REPORT
@@ -151,14 +151,14 @@ flowchart TB
     style REPORT fill:#0f3320,stroke:#4caf50,stroke-width:2px,color:#fff
 ```
 
-The roles are split so nothing grades its own work. `fuzzer` writes harnesses it
-never runs. `gremlin` runs harnesses it cannot edit. `challenger`, which found
+The roles are split so nothing grades its own work. `sabot-fuzzer` writes harnesses it
+never runs. `gremlin` runs harnesses it cannot edit. `sabot-challenger`, which found
 nothing itself, decides what each finding proves.
 
 ### Scope modes
 
 - full (default): every step
-- quick: recon plus a smoke campaign, no new harnesses or challenger
+- quick: recon plus a smoke campaign, no new harnesses or sabot-challenger
 - audit-only: describe findings, never patch (regression tests are still written)
 - harness-only: author harnesses and corpora
 
@@ -178,8 +178,7 @@ picks which apply to a target and builds the harness that aims them. Note that t
 
 | Tool | What it does |
 |---|---|
-| [Semgrep](https://github.com/semgrep/semgrep) | AST/dataflow pattern scanning across languages |
-| [Opengrep](https://github.com/opengrep/opengrep) | LGPL Semgrep fork with the closed rules restored |
+| [Opengrep](https://github.com/opengrep/opengrep) | AST/dataflow pattern scanning across languages; the LGPL Semgrep fork with the closed rules restored, run against the baked Semgrep rule packs |
 | [Joern](https://github.com/joernio/joern) | code-property-graph interprocedural taint queries |
 | [ast-grep](https://github.com/ast-grep/ast-grep) | structural search and repo-specific rule synthesis |
 | [weggli](https://github.com/weggli-rs/weggli) | C/C++ semantic vulnerability pattern search |
@@ -191,7 +190,7 @@ picks which apply to a target and builds the harness that aims them. Note that t
 
 | Tool | What it does |
 |---|---|
-| [AFL++](https://github.com/AFLplusplus/AFLplusplus) · [honggfuzz](https://github.com/google/honggfuzz) · [libFuzzer](https://llvm.org/docs/LibFuzzer.html) | coverage-guided native fuzzers |
+| [libFuzzer](https://llvm.org/docs/LibFuzzer.html) | coverage-guided native fuzzing, through cargo-fuzz or `-fsanitize=fuzzer` |
 | [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) | libFuzzer for Rust |
 | [atheris](https://github.com/google/atheris) | coverage-guided fuzzer for Python |
 | [Jazzer.js](https://github.com/CodeIntelligenceTesting/jazzer.js) | coverage-guided fuzzer for JS/TS |
@@ -205,7 +204,6 @@ picks which apply to a target and builds the harness that aims them. Note that t
 
 | Tool | What it does |
 |---|---|
-| [CASR](https://github.com/ispras/casr) | crash triage, dedup by stack, severity |
 | [shrinkray](https://github.com/DRMacIver/shrinkray) | generic test-case reducer |
 | [C-Reduce](https://github.com/csmith-project/creduce) | C/C++ source reduction |
 
@@ -234,7 +232,7 @@ picks which apply to a target and builds the harness that aims them. Note that t
 | [Trivy](https://github.com/aquasecurity/trivy) · [Checkov](https://github.com/bridgecrewio/checkov) | IaC misconfig, container, and secret scanning |
 | [hadolint](https://github.com/hadolint/hadolint) · [kube-linter](https://github.com/stackrox/kube-linter) | Dockerfile and Kubernetes linting |
 | [zizmor](https://github.com/zizmorcore/zizmor) · [poutine](https://github.com/boostsecurityio/poutine) | CI/CD workflow-injection and supply-chain scanning |
-| [actionlint](https://github.com/rhysd/actionlint) · [pinact](https://github.com/suzuki-shunsuke/pinact) | GitHub Actions lint and SHA-pinning |
+| [actionlint](https://github.com/rhysd/actionlint) | GitHub Actions lint. pinact was dropped: `zizmor --offline` reports an unpinned action itself |
 | [tflint](https://github.com/terraform-linters/tflint) | Terraform provider-aware linting |
 
 ### Web & frontend
@@ -269,7 +267,7 @@ picks which apply to a target and builds the harness that aims them. Note that t
 | `.../scripts/fuzz-cli.py` | a JSON-stdin/CLI adversarial harness for any hook or guard |
 | `.../scripts/run-contained.sh` | the container wrapper every execution phase runs through |
 | `.../references/containers/` | per-surface Dockerfiles (rust, python, node), extensible |
-| `packages/sabot/.apm/agents/` | sabot-scout, fuzzer, gremlin, triager, challenger, hardener |
+| `packages/sabot/.apm/agents/` | sabot-scout, sabot-fuzzer, gremlin, triager, sabot-challenger, hardener |
 
 
 

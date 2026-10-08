@@ -41,10 +41,12 @@ the wrong cwd or an empty store, not a run without findings); 4 no beads for run
 
 import argparse
 import json
+import posixpath
 import re
 import shutil
 import subprocess
 import sys
+from pathlib import PurePosixPath
 
 
 # Which sab-* label sorts a bead into which bucket. Order matters: the first match
@@ -280,7 +282,16 @@ NON_DEFECT_BUCKETS = ("harnesses", "crashes", "coverage", "surfaces")
 # Measured: 6 findings in one campaign had a locus under `.sabot/run-<id>/artifacts/`, all
 # 6 tiered PROVEN or REACHABLE, none labelled, and only 2 of the 6 carried the `TOOLING:`
 # title prefix -- so the title is not the detector and the locus is.
-AUDIT_TOOLING_LOCUS = (".sabot/", "/artifacts/")
+#
+# Matched by path COMPONENT against this run's own artifacts root, never by substring: a
+# substring test for `/artifacts/` labelled a product file such as src/artifacts/parser.py
+# as audit tooling and dropped it from the product's defect total.
+#
+# run-contained.sh mounts the run's artifacts volume here, so a locus recorded from inside
+# a contained run names the run's artifacts by this path.
+CONTAINER_ARTIFACTS = ("/", "artifacts")
+# workflow.md step 1's default artifacts dir under the target, with `{run_id}` filled in.
+DEFAULT_ARTIFACTS = (".sabot", "{run_id}", "artifacts")
 
 # Priority derived from the two axes, so it carries the information the axes carry rather
 # than the creating agent's default. Measured: 14 of 21 surfaces in one campaign were 100%
@@ -397,16 +408,45 @@ def bucket_of(bead):
     return None, False
 
 
-def audit_tooling(bead):
+def _path_parts(path: str) -> tuple[str, ...]:
+    return PurePosixPath(posixpath.normpath(path)).parts
+
+
+def artifacts_roots(epic_meta: dict, run_id) -> set[tuple[str, ...]]:
+    """Path-component prefixes that name THIS run's artifacts dir, in every form a locus
+    takes: the stamped absolute path, that path relative to the target (a locus is
+    relative to the repo), the default `.sabot/<run_id>/artifacts`, and the in-container
+    mount."""
+    roots = {CONTAINER_ARTIFACTS}
+    bases = [_path_parts(b) for b in (epic_meta.get("target"), epic_meta.get("checkout_path"))
+             if isinstance(b, str) and b.startswith("/")]
+    stamped = epic_meta.get("artifacts")
+    if isinstance(stamped, str) and stamped.strip():
+        own = _path_parts(stamped.strip())
+        roots.add(own)
+        roots.update(own[len(b):] for b in bases if len(own) > len(b) and own[:len(b)] == b)
+    if run_id:
+        default = tuple(part.format(run_id=run_id) for part in DEFAULT_ARTIFACTS)
+        roots.add(default)
+        roots.update(b + default for b in bases)
+    return roots
+
+
+def audit_tooling(bead, roots: set[tuple[str, ...]]) -> bool:
     """True when this finding's locus is inside the run's own artifacts, which makes it a
     defect in the audit rather than in the product. Read from the locus, not the title:
     only 2 of 6 such findings in one campaign announced themselves in their title."""
     locus = parse_meta(bead).get("locus")
-    return isinstance(locus, str) and any(p in locus for p in AUDIT_TOOLING_LOCUS)
+    if not isinstance(locus, str) or not locus.strip():
+        return False
+    # `file:line`, `file:line:col`, and `file:start-end` all name the file before the colon.
+    parts = _path_parts(re.sub(r"(:\d+(-\d+)?)+$", "", locus.strip()))
+    return any(parts[:len(root)] == root for root in roots)
 
 
-def label_gaps(bead, bucket):
-    """The labels this bead should carry and does not.
+def label_gaps(bead, bucket, tooling: bool):
+    """The labels this bead should carry and does not. `tooling` is `audit_tooling()`
+    for a finding.
 
     Kept separate from the emitted record: `labels` and `priority` are noise a report never
     renders, so they are read off the raw bead here and dropped by `shape`.
@@ -417,7 +457,7 @@ def label_gaps(bead, bucket):
         want.append(AUDIT_LABEL)
     non_defect = bucket in NON_DEFECT_BUCKETS or (
         bucket == "findings"
-        and (parse_meta(bead).get("tier") == "REFUTED" or audit_tooling(bead))
+        and (parse_meta(bead).get("tier") == "REFUTED" or tooling)
     )
     if non_defect and "non-work" not in labels:
         want.append("non-work")
@@ -596,13 +636,17 @@ def dedup_key_of(finding):
     Derived is recorded as derived: the finder knows the vulnerability class and a later
     pass reconstructing it from a one-line title is guessing, so a group built on a
     fallback key must be visible as such rather than presented as the finder's judgment.
+
+    The derived key has the canonical `<locus>:<class>` shape and leaves the surface out,
+    so the same locus filed from two surfaces collapses onto one group as independent
+    confirmation instead of reading as two findings.
     """
     key = finding.get("dedup_key")
     if isinstance(key, str) and key.strip():
         return key.strip().lower(), False
     derived = ":".join(
         str(finding.get(k) or "?").strip().lower()
-        for k in ("surface", "locus", "cwe")
+        for k in ("locus", "cwe")
     )
     return derived, True
 
@@ -982,6 +1026,7 @@ def main():
         sys.exit(4)  # epic not found
     epic_id = epic.get("id")
     run_id = parse_meta(epic).get("run_id")
+    own_artifacts = artifacts_roots(parse_meta(epic), run_id)
 
     report = {
         "run_id": run_id,
@@ -1037,7 +1082,8 @@ def main():
         if not bucket:
             continue
         rec = shape(bead, bucket)
-        if bucket == "findings" and audit_tooling(bead):
+        tooling = bucket == "findings" and audit_tooling(bead, own_artifacts)
+        if tooling:
             # Flagged on the record so the report can total product defects apart from the
             # audit's own. A tiered defect in a synthesized rule is real work and belongs in
             # the report; counted among the product's findings it inflates them.
@@ -1056,7 +1102,7 @@ def main():
                          "node with `bd dep add`.",
             })
 
-        want_labels = label_gaps(bead, bucket)
+        want_labels = label_gaps(bead, bucket, tooling)
         if want_labels:
             report["stamping_gaps"].append({
                 "id": bid, "bucket": bucket,
