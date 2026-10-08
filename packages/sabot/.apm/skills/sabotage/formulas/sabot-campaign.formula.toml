@@ -371,8 +371,10 @@ labels = ["sab-audit", "non-work"]
 condition = "{{live_spawn}} == yes"
 description = """Step 9. LOAD references/agentic-fuzz.md. OPT-IN ONLY.
 
-Runs generated attacks against a live hook, skill, or agent inside a Worktrunk lease.
-REFUSE on a whole-repo target: the blast radius is the grant, not the file list.
+Runs generated attacks against a live hook, skill, or agent inside a container whose
+only writable tree is a Worktrunk lease; the lease alone isolates nothing. Egress is
+enforced by the container network, or the egress cases are NOT EXECUTED. REFUSE on a
+whole-repo target: the blast radius is the grant, not the file list.
 
 Read the canaries BEFORE discarding the lease. A lease torn down unread proves nothing
 either way.
@@ -612,8 +614,9 @@ the VALUE rather than the panic. Never edit a check in the direction of acceptin
 defect, and never make a check pass by editing its configuration.
 
 Write a regression test per PROVEN finding, and graduate the rule behind it into the
-repo's own lint config: the test guards that one instance and only the rule guards the
-next. Paste the suppression counts before and after.
+repo's own lint config when the recorded approval names that graduation: the test
+guards that one instance and only the rule guards the next. An unapproved graduation
+stays a proposal in the report. Paste the suppression counts before and after.
 
 Stamp `state:patched`, `patch_files`, `regression_test`, `rule_graduated`,
 `verified_by`, and `verification`. On the ticket route stamp `ticket_id` per finding, so
