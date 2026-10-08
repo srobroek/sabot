@@ -124,6 +124,27 @@ exit 0
 """
 
 
+RUNTIMES = ("docker", "finch")
+
+
+def system_path(tmp_path: Path, hidden: set[str]) -> str:
+    """/usr/bin:/bin with every `hidden` name removed. A CI runner ships a real docker
+    in /usr/bin, which find_runtime picked up ahead of the stub under test, so a dir
+    holding a hidden name is replaced by a mirror of symlinks to everything else."""
+    dirs = []
+    for d in (Path("/usr/bin"), Path("/bin")):
+        if not any((d / name).exists() for name in hidden):
+            dirs.append(str(d))
+            continue
+        mirror = tmp_path / ("sys" + str(d).replace("/", "_"))
+        mirror.mkdir(exist_ok=True)
+        for entry in d.iterdir():
+            if entry.name not in hidden and not (mirror / entry.name).exists():
+                (mirror / entry.name).symlink_to(entry)
+        dirs.append(str(mirror))
+    return ":".join(dirs)
+
+
 def probe(tmp_path: Path, *args: str, runtime: str = "docker", images: str = "",
           fail: str = "") -> subprocess.CompletedProcess:
     bin_dir = tmp_path / "bin"
@@ -134,7 +155,9 @@ def probe(tmp_path: Path, *args: str, runtime: str = "docker", images: str = "",
     # A roomy disk, so the free-space precondition never decides these tests.
     executable(bin_dir / "df", "#!/bin/sh\necho 'Filesystem 1M-blocks Used Available'\n"
                                "echo '/dev/x 999999 1 999998'\n")
-    env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin",
+    # Only the stub runtime may answer: a host docker or finch decides the probe otherwise.
+    host = system_path(tmp_path, set(RUNTIMES))
+    env = {**os.environ, "PATH": f"{bin_dir}:{host}",
            "FAKE_IMAGES": images, "FAKE_FAIL": fail}
     return subprocess.run(["bash", str(SCRIPT), "--probe", *args],
                           capture_output=True, text=True, env=env, timeout=60)
