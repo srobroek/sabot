@@ -161,7 +161,8 @@ step rendered as a sub-bullet was silently skipped on one live run.
    boundary an agent can enumerate, cover, and read inside the cap, stamp
    `coverage_ratio` on each, and decide the node count together with the
    concurrent-container ceiling.
-3. **Probe, propose tools and budget, then wait** (blocking, interactive runs).
+3. **Probe, propose tools and budget, wait, then provision only after approval**
+   (blocking, interactive runs).
    See `references/tooling.md` with `references/installer.md`.
 4. **Repo-global pre-pass.** Delegate to one spawned agent: run every whole-tree
    scanner (deps, secrets), the union of cross-surface scanner invocations, the

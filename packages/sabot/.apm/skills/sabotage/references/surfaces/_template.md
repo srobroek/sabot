@@ -2,8 +2,10 @@
 
 Copy this to add a surface. Fill every section, add a row to `index.md`, and add
 any new tool to `tooling.md` plus the surface `Dockerfile` (bake it into the image,
-with a pinned version). Nothing else in the package
-needs to change.
+with a pinned version), to that image's `IMAGE_TOOLS_<image>` list in
+`scripts/install-tools.sh`, and to the matching row of the assert table in
+`isolation.md`, since a tool missing from the manifest is never probed. Nothing else
+in the package needs to change.
 
 Target length: under 200 lines. A surface doc is a checklist a `gremlin` works
 through, not an essay.
