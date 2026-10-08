@@ -181,6 +181,78 @@ def test_parse_mode_counts_go_and_pytest_output(tmp_path):
         assert run("--parse", str(log)).returncode == 0, text
 
 
+# --- counting finished tests, once each --------------------------------------
+
+
+PYTEST_DEFAULT = (
+    "============================= test session starts ==============================\n"
+    "platform linux -- Python 3.12.3, pytest-8.3.2, pluggy-1.5.0\n"
+    "rootdir: /target\n"
+    "collected 12 items\n"
+    "\n"
+    "tests/test_parse.py ............                                         [100%]\n"
+    "\n"
+    "============================== 12 passed in 0.05s ==============================\n"
+)
+
+
+def parse(tmp_path, text: str, *args: str):
+    log = tmp_path / "captured.log"
+    log.write_text(text)
+    return run("--parse", str(log), *args)
+
+
+def test_standard_non_verbose_pytest_output_is_executed(tmp_path):
+    # Default pytest prints no `file::test` line; only -v does. A passing suite in the
+    # default format was recorded as NOT EXECUTED.
+    p = parse(tmp_path, PYTEST_DEFAULT)
+    assert p.returncode == 0, p.stderr
+    assert "units=12 named=1" in p.stderr
+
+
+def test_a_collected_suite_that_ran_nothing_is_not_executed(tmp_path):
+    # `collected N items` is discovery. Every test skipped is no work at all.
+    text = ("collected 3 items\n\n"
+            "tests/test_x.py::test_a SKIPPED\ntests/test_x.py::test_b SKIPPED\n"
+            "tests/test_x.py::test_c SKIPPED\n\n"
+            "============================== 3 skipped in 0.01s ==============================\n")
+    p = parse(tmp_path, text)
+    assert p.returncode == EXIT_NO_WORK, p.stderr
+    assert "units=0" in p.stderr
+
+
+def test_a_go_test_counts_once_not_once_per_line(tmp_path):
+    # `=== RUN` starts a test and `--- PASS:` finishes it; summing both doubled every test.
+    text = "=== RUN   TestParse\n--- PASS: TestParse (0.01s)\nPASS\n"
+    p = parse(tmp_path, text)
+    assert p.returncode == 0, p.stderr
+    assert "units=1 " in p.stderr
+    assert parse(tmp_path, text, "--min-units", "2").returncode == EXIT_NO_WORK
+
+
+def test_a_skipped_go_test_is_not_work(tmp_path):
+    p = parse(tmp_path, "=== RUN   TestNeedsNet\n--- SKIP: TestNeedsNet (0.00s)\nPASS\n")
+    assert p.returncode == EXIT_NO_WORK, p.stderr
+
+
+def test_a_rust_target_counts_its_summary_not_its_banner_and_lines(tmp_path):
+    # 3 started, 1 ignored: the summary says 2 ran, and the per-test lines are not added.
+    text = ("running 3 tests\ntest a::one ... ok\ntest a::two ... ok\ntest a::three ... ignored\n"
+            "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out\n")
+    p = parse(tmp_path, text)
+    assert p.returncode == 0, p.stderr
+    assert "units=2 " in p.stderr
+
+
+def test_a_target_that_died_mid_run_is_work_then_failure_not_unrun(tmp_path):
+    # An empty lib target, then an integration target killed after one test finished.
+    script = ("printf 'running 0 tests\\ntest result: ok. 0 passed; 0 failed; 0 ignored\\n"
+              "running 5 tests\\ntest io::reads ... ok\\n"
+              "error: test failed (signal: 11, SIGSEGV: invalid memory reference)\\n'; exit 101")
+    p = run("--out", str(tmp_path / "out.log"), "--", "sh", "-c", script)
+    assert p.returncode == EXIT_CMD, p.stderr
+
+
 # --- shape -----------------------------------------------------------------
 
 

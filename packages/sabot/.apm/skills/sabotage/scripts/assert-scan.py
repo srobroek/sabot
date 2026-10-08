@@ -20,8 +20,10 @@ So the guarantee belongs to whatever wraps a scanner invocation, not to any one 
   1. DELETE the output path before the run, and CONFIRM it is absent. A result that
      predates the run cannot be evidence of the run.
   2. After the run require the file to EXIST, be NON-EMPTY, and PARSE.
-  3. Require a NONZERO count of files actually scanned. Zero files scanned is NOT
-     EXECUTED regardless of the exit code.
+  3. Require a NONZERO count of files actually scanned, from evidence the tool gives:
+     its own scanned-file list or count, bandit's per-file `metrics`, or the files its
+     findings name. Zero files scanned is NOT EXECUTED regardless of the exit code. An
+     `errors` entry is not coverage: a file the tool failed on is a file it did not scan.
 
 Any of those failing is NOT EXECUTED, with the reason recorded. It is never zero
 findings and never a retry. "Zero findings" and "the scanner did not run" are the same
@@ -29,6 +31,14 @@ bytes on disk unless something asserts the difference.
 
 A scanner legitimately reporting no findings over a nonzero file count is a PASS: the
 assertion is about coverage, not about finding something.
+
+Some formats carry no coverage field at all: shellcheck's and ast-grep's clean `[]`, or
+a trivy report with no `Results`. That is coverage UNREPORTED, not zero files, and it
+used to score 0 and fail every clean scan from those tools. At rc=0, from a report this
+run wrote fresh and that parses, it passes with `coverage_reported: false`, and the
+caller records the coverage as unreported rather than as a file count. At a nonzero rc,
+when the report lists only errors, or under an explicit `--min-files` above 1, nothing
+shows the tool scanned anything, so it is NOT EXECUTED.
 
 EXIT CODES. 0 the scan ran and its output is trustworthy; 2 usage (never 0: a wrapper
 that exits 0 on its own usage error, having run nothing, is this same fail-open);
@@ -55,17 +65,12 @@ EXIT_NOT_EXECUTED = 11
 # in a generated rule file killed opengrep outright under the default locale.
 LOCALE_ENV = {"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "PYTHONUTF8": "1"}
 
-# Where each output format reports how many files it looked at. Counting the files the
-# tool says it scanned is the only signal that distinguishes "clean" from "did nothing";
-# a findings count of zero cannot.
-_JSON_SCANNED_PATHS = (
-    ("paths", "scanned"),          # semgrep / opengrep
-    ("paths", "_comment"),         # present but useless; kept so the key list is honest
-    ("results",),                  # ast-grep, trivy: fall back to distinct file fields
-    ("runs",),                     # sarif
-)
-
 _FILE_FIELDS = ("path", "file", "filename", "Target", "uri", "absolute_path")
+
+# Report sections that name files the tool did NOT scan: one it failed to parse, or one
+# it skipped. Counted as coverage, an errors-only report certified a scan of the very
+# files the scanner could not read.
+_NOT_COVERAGE_KEYS = ("errors", "skipped")
 
 
 def _distinct_files(node, seen: set[str], depth: int = 0) -> None:
@@ -79,6 +84,8 @@ def _distinct_files(node, seen: set[str], depth: int = 0) -> None:
         return
     if isinstance(node, dict):
         for key, value in node.items():
+            if key in _NOT_COVERAGE_KEYS:
+                continue
             if key in _FILE_FIELDS and isinstance(value, str) and value:
                 seen.add(value)
             elif key == "artifactLocation" and isinstance(value, dict):
@@ -92,8 +99,14 @@ def _distinct_files(node, seen: set[str], depth: int = 0) -> None:
             _distinct_files(item, seen, depth + 1)
 
 
-def scanned_count(doc) -> tuple[int, str]:
-    """(files scanned, how it was derived). Prefers the tool's own count."""
+def scanned_count(doc) -> tuple[int | None, str]:
+    """(files scanned, where the count came from), or None when the report holds no count.
+
+    Prefers a count the tool states. Next, bandit's `metrics` holds one entry per file it
+    scanned, clean or not. Last, a file that a finding or a scanned target names is a lower
+    bound: the tool read it to report on it. A clean report in a format with no coverage
+    field has nothing to count, which is UNREPORTED, not zero.
+    """
     if isinstance(doc, dict):
         paths = doc.get("paths")
         if isinstance(paths, dict) and isinstance(paths.get("scanned"), list):
@@ -104,9 +117,22 @@ def scanned_count(doc) -> tuple[int, str]:
                 return value, key
             if isinstance(value, list):
                 return len(value), key
+        metrics = doc.get("metrics")
+        if isinstance(metrics, dict) and "_totals" in metrics:
+            return (sum(1 for key in metrics if key != "_totals"),
+                    "metrics (bandit: one entry per scanned file)")
     seen: set[str] = set()
     _distinct_files(doc, seen)
-    return len(seen), "distinct file references in the report"
+    if seen:
+        return len(seen), "distinct files named by findings or scanned targets"
+    return None, "the report carries no file count and names no scanned file"
+
+
+def error_count(doc) -> int:
+    """Entries in a report's `errors` list: files or rules the tool failed on."""
+    if isinstance(doc, dict) and isinstance(doc.get("errors"), list):
+        return len(doc["errors"])
+    return 0
 
 
 def partial_parse_files(doc) -> set[str]:
@@ -263,9 +289,28 @@ def main(argv: list[str] | None = None) -> int:
     report["files_scanned"] = files
     report["files_scanned_source"] = how
     report["findings"] = findings_count(doc) if doc is not None else None
+    report["coverage_reported"] = files is not None
 
-    if not note("nonzero_files_scanned", files >= args.min_files,
-                f"{files} file(s) via {how}, threshold {args.min_files}"):
+    if files is None:
+        note("coverage_reported", False, f"{how}, which a clean report in a format with "
+             "no coverage field also looks like")
+        errors = error_count(doc)
+        refusal = None
+        if errors:
+            refusal = (f"{tool}'s report lists {errors} error(s) and names no scanned file. "
+                       "An error is a file the tool failed on, not coverage, so an "
+                       "errors-only report is not evidence of a scan.")
+        elif rc != 0:
+            refusal = (f"{tool} exited {rc} and its report carries neither a file count "
+                       "nor a finding, so nothing shows it scanned anything.")
+        elif args.min_files > 1:
+            refusal = (f"--min-files {args.min_files} needs a file count, and {tool}'s "
+                       "report format carries none.")
+        if refusal:
+            return _finish(report, EXIT_NOT_EXECUTED, args.as_json,
+                           refusal + " Record it as NOT EXECUTED with that reason.")
+    elif not note("nonzero_files_scanned", files >= args.min_files,
+                  f"{files} file(s) via {how}, threshold {args.min_files}"):
         return _finish(
             report, EXIT_NOT_EXECUTED, args.as_json,
             f"{tool} reports {files} file(s) scanned. Record this as NOT EXECUTED with "
@@ -286,6 +331,11 @@ def main(argv: list[str] | None = None) -> int:
             f"{tool} scanned {files} file(s) and then exited {rc}; classify it with "
             "classify-failure.py before calling it a target defect",
         )
+    if files is None:
+        return _finish(report, 0, args.as_json,
+                       f"{tool} exited 0 with a fresh, parseable, clean report whose format "
+                       "names no scanned file. Record its coverage as UNREPORTED, not as a "
+                       "file count.")
     return _finish(report, 0, args.as_json,
                    f"{tool} scanned {files} file(s); "
                    f"{report['findings']} finding(s) recorded"

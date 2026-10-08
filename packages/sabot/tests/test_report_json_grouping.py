@@ -815,6 +815,42 @@ def test_a_finding_inside_the_artifacts_dir_is_audit_tooling_not_a_product_defec
     assert doc["summary"]["product_defects"] == 1
 
 
+def test_a_product_dir_named_artifacts_is_still_a_product_defect(bd_factory):
+    """A substring test for `/artifacts/` dropped src/artifacts/parser.py from the
+    product's defects. Only the run's own artifacts dir is audit tooling."""
+    doc, _ = report(bd_factory, export([
+        finding("e.1.2", locus="src/artifacts/parser.py:10"),
+        finding("e.1.3", locus="/repo/src/artifacts/parser.py:12"),
+    ]))
+    assert not [f["id"] for f in doc["findings"] if f.get("audit_tooling")]
+    assert doc["summary"]["product_defects"] == 2
+
+
+def test_the_stamped_artifacts_dir_and_the_container_mount_are_audit_tooling(bd_factory):
+    lines = export([
+        finding("e.1.2", locus="/work/repo/audit-out/rules/code.yml:4"),
+        finding("e.1.3", locus="audit-out/harness.py:2"),
+        finding("e.1.4", locus="/artifacts/rules-code.yml:7"),
+        finding("e.1.5", locus="/work/repo/src/main.rs:1"),
+    ])
+    lines[0]["metadata"].update(target="/work/repo", artifacts="/work/repo/audit-out")
+    doc, _ = report(bd_factory, lines)
+    tooling = {f["id"] for f in doc["findings"] if f.get("audit_tooling")}
+    assert tooling == {"e.1.2", "e.1.3", "e.1.4"}
+    assert doc["summary"]["product_defects"] == 1
+
+
+def test_a_derived_dedup_key_leaves_the_surface_out(bd_factory):
+    """The canonical key is `<locus>:<class>`. The same locus filed from two surfaces is
+    independent confirmation of one finding, not two findings."""
+    doc, _ = report(bd_factory, export([
+        finding("e.1.1", dedup_key=None, surface="code"),
+        finding("e.2.1", dedup_key=None, surface="shell"),
+    ], surfaces=("code", "shell")))
+    assert [g["dedup_key"] for g in doc["groups"]] == ["a.rs:1:cwe-190"]
+    assert sorted(doc["groups"][0]["instances"]) == ["e.1.1", "e.2.1"]
+
+
 def test_a_refuted_finding_left_open_is_registered(bd_factory):
     """The no-delete rule keeps the wisp and its refutation, not its open status.
 
