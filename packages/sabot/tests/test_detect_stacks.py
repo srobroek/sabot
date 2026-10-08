@@ -214,3 +214,29 @@ def test_python_manifest_with_nothing_to_install_carries_a_skip_reason(tmp_path)
     assert unit["fetch"] is None
     assert "poetry" in unit["skip_reason"]
     assert "# skipped pyproject.toml" in run(tmp_path, "--bake").stdout
+
+
+def test_a_dev_group_include_bakes_the_included_group(tmp_path):
+    # PEP 735: `{include-group = "x"}` is exactly the contents of group x. The table entry
+    # was dropped, so a dev group built from includes baked nothing.
+    make_repo(tmp_path, {"pyproject.toml": (
+        "[project]\nname='x'\n"
+        "[dependency-groups]\n"
+        "dev=[{include-group='Test_Tools'}, 'ruff']\n"
+        "test-tools=['pytest==8.3.5', {include-group='cov'}]\n"
+        "cov=['coverage']\n"
+    )})
+    (unit,) = json.loads(run(tmp_path).stdout)["bake_units"]
+    assert unit["requirements"] == ["coverage", "pytest==8.3.5", "ruff"]
+    assert unit["fetch"] is not None
+
+
+@pytest.mark.parametrize("groups,why", [
+    ("dev=[{include-group='a'}]\na=[{include-group='dev'}]\n", "include cycle"),
+    ("dev=[{include-group='missing'}]\n", "unknown group 'missing'"),
+])
+def test_a_broken_include_is_a_skip_reason_not_a_silent_drop(tmp_path, groups, why):
+    make_repo(tmp_path, {"pyproject.toml": "[project]\nname='x'\n[dependency-groups]\n" + groups})
+    (unit,) = json.loads(run(tmp_path).stdout)["bake_units"]
+    assert unit["fetch"] is None
+    assert why in unit["skip_reason"]

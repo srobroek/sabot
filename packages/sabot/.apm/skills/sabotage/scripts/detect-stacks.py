@@ -35,6 +35,7 @@ Exit: 0 ok; 2 usage; 3 not a git repo / git absent.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -156,6 +157,35 @@ def uv_lock_pins(path):
     return pins, None
 
 
+def _group_key(name):
+    """PEP 735 compares dependency-group names normalized, as PEP 503 does package names."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def dependency_group(groups, name, seen=()):
+    """The requirement strings of one PEP 735 group, with every include expanded.
+
+    An `{include-group = "x"}` entry is exactly the contents of group x, so dropping the
+    table baked nothing for a dev group built from includes. Raises ValueError on an
+    include cycle or an included group that does not exist, as the spec requires.
+    """
+    key = _group_key(name)
+    if key in seen:
+        raise ValueError(f"dependency-groups include cycle through '{name}'")
+    reqs = []
+    for entry in groups[key]:
+        if isinstance(entry, str):
+            reqs.append(entry)
+        elif isinstance(entry, dict) and set(entry) == {"include-group"}:
+            included = entry["include-group"]
+            if _group_key(included) not in groups:
+                raise ValueError(f"dependency-groups '{name}' includes unknown group '{included}'")
+            reqs += dependency_group(groups, included, (*seen, key))
+        else:
+            raise ValueError(f"dependency-groups '{name}' has an invalid entry {entry!r}")
+    return reqs
+
+
 def pyproject_requirements(path):
     """The declared runtime plus dev/test requirements of a PEP 621 pyproject."""
     doc, err = _read_toml(path)
@@ -164,11 +194,14 @@ def pyproject_requirements(path):
     project = doc.get("project") or {}
     reqs = list(project.get("dependencies") or [])
     extras = project.get("optional-dependencies") or {}
-    groups = doc.get("dependency-groups") or {}
+    groups = {_group_key(k): v for k, v in (doc.get("dependency-groups") or {}).items()}
     for name in PY_DEV_GROUPS:
         reqs += extras.get(name) or []
-        # A group entry may be an `{include-group = ...}` table rather than a string.
-        reqs += [r for r in groups.get(name) or [] if isinstance(r, str)]
+        if _group_key(name) in groups:
+            try:
+                reqs += dependency_group(groups, name)
+            except ValueError as exc:
+                return None, f"pyproject.toml {exc}"
     return sorted(set(reqs)), None
 
 

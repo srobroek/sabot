@@ -126,6 +126,8 @@ fi
 #           M failed` summary, else its `test x ... ok|FAILED` lines
 #   nextest `Summary [...] N tests run`
 #   go      `--- PASS:` / `--- FAIL:` result lines, subtests included. `=== RUN` is a start.
+#           Without -v, a passing package prints only `ok <pkg> <time>s`, counted as one
+#           unit per package; `[no tests to run]` and a `(cached)` result are not work.
 #   pytest  the closing `N passed, M failed ... in Xs` summary, else the per-test results:
 #           `file::test PASSED` (-v) or the `file.py ..F.` progress characters (default)
 # A runner that started tests and died before reporting any result (`running N tests` or
@@ -151,19 +153,20 @@ UNITS="$(awk '
   /^ *--- (PASS|FAIL):/             { gdone++; next }
   /^ *--- SKIP:/                    { gskip++; next }
   /^=== RUN /                       { grun++; next }
+  /^ok[ \t]+[^ \t]+[ \t]+[0-9.]+s/ && !/no tests to run/ { gok++; next }
   /^(=+ )?(no tests ran|[0-9]+ [a-z]+(, [0-9]+ [a-z]+)*) in [0-9.]+s/ { psum_seen = 1; psum += executed(); next }
   /^[^ ]+::[^ ]+ (PASSED|FAILED|XFAIL|XPASS)/ { pev++; next }
   /^[A-Za-z0-9_.\/-]+\.py [.FEsxX]+/ { prog = $2; pev += gsub(/[.FxX]/, "", prog); next }
   END {
     flush_rust()
-    go = (gdone + gskip > 0) ? gdone : grun
+    go = (gdone + gskip > 0) ? gdone : (grun > 0 ? grun : gok)
     py = psum_seen ? psum : pev
     print rust + nextest + go + py
   }
 ' "$LOG" 2>/dev/null)"
 [ -n "$UNITS" ] || UNITS=0
 
-NAMED="$(grep -cE '^(test [A-Za-z0-9_:]+ \.\.\.|--- (PASS|FAIL): |=== RUN |[A-Za-z0-9_./-]+::[A-Za-z0-9_]+ |[A-Za-z0-9_./-]+\.py [.FEsxX]+)' "$LOG" 2>/dev/null || true)"
+NAMED="$(grep -cE '^(test [A-Za-z0-9_:]+ \.\.\.|--- (PASS|FAIL): |=== RUN |ok[[:space:]]+[^[:space:]]+[[:space:]]+[0-9.]+s|[A-Za-z0-9_./-]+::[A-Za-z0-9_]+ |[A-Za-z0-9_./-]+\.py [.FEsxX]+)' "$LOG" 2>/dev/null || true)"
 [ -n "$NAMED" ] || NAMED=0
 
 ZERO_SELECTED=0

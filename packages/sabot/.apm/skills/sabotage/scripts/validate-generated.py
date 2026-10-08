@@ -55,6 +55,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -294,24 +295,26 @@ def _nearest(path: Path, marker: str, stop: Path) -> Path | None:
 def contained_build(path: Path, root: Path) -> tuple[str | None, str]:
     """(in-container shell command, or None and why) for a build-checked harness.
 
-    Paths are rewritten under /target, where run-contained.sh mounts `root` read-only.
+    Paths are rewritten under /target, where run-contained.sh mounts `root` read-only, and
+    shell-quoted: the command runs under `sh -c`, and a target path holding `;` or a space
+    would otherwise split into commands whose last status, not the build's, is reported.
     """
-    def inside(p: Path) -> str:
+    def inside(p: Path, suffix: str = "") -> str:
         rel = p.relative_to(root).as_posix()
-        return "/target" if rel == "." else f"/target/{rel}"
+        return shlex.quote(("/target" if rel == "." else f"/target/{rel}") + suffix)
 
     if path.suffix == ".rs":
         crate = _nearest(path, "Cargo.toml", root)
         if crate is None:
             return None, (f"{path} has no Cargo.toml in any parent, so no fuzz target could "
                           "ever build it")
-        return f"cargo check --quiet --offline --manifest-path {inside(crate)}/Cargo.toml", ""
+        return f"cargo check --quiet --offline --manifest-path {inside(crate, '/Cargo.toml')}", ""
     if path.suffix == ".go":
         module = _nearest(path, "go.mod", root)
         if module is None:
             return None, f"{path} has no go.mod in any parent, so it is in no package"
         pkg = path.parent.relative_to(module).as_posix()
-        return f"cd {inside(module)} && go vet ./{'' if pkg == '.' else pkg}", ""
+        return f"cd {inside(module)} && go vet {shlex.quote('./' + ('' if pkg == '.' else pkg))}", ""
     tsconfig = _nearest(path, "tsconfig.json", root)
     if tsconfig is not None:
         return f"tsc --noEmit -p {inside(tsconfig)}", ""

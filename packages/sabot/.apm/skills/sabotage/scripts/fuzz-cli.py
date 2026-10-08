@@ -208,7 +208,7 @@ class Runner:
         replayed on stdin does not reproduce anything either.
         """
         self.artifacts.mkdir(parents=True, exist_ok=True)
-        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name)[:80]
+        safe = repro_stem(name)
         path = self.artifacts / f"{safe}.input"
 
         if not payload:
@@ -228,6 +228,16 @@ class Runner:
             )
         (self.artifacts / f"{safe}.delivery").write_text(f"{delivery}\n")
         return str(path.resolve())
+
+
+def repro_stem(case: str) -> str:
+    """The artifact filename stem a case's repro is saved under (`<stem>.input`)."""
+    return "".join(c if c.isalnum() or c in "-_." else "_" for c in case)[:80]
+
+
+def vector_case(vec: dict, i: int) -> str:
+    """The case label of vector `i`, which names its findings and its repro file."""
+    return f"vector/{vec.get('name') or f'vector-{i}'}"
 
 
 def persist(r: "Runner", case: str, payload: bytes, delivery: str) -> str:
@@ -359,6 +369,10 @@ def validate_vectors(vectors: list[dict]) -> list[str]:
     did-not-crash vector is a false clean, so an unusable vector is a loud refusal.
     """
     problems: list[str] = []
+    # Distinct names can sanitize to one repro file ('case/x' and 'case_x'), and the later
+    # finding's payload then overwrites the earlier one's, so a replay reproduces the wrong
+    # input. A collision is refused before anything runs.
+    stems: dict[str, int] = {}
     for i, vec in enumerate(vectors):
         # Shape first: a string element used to crash this loop on `vec.get`, so the
         # harness died with a traceback instead of naming the unusable vector.
@@ -378,6 +392,20 @@ def validate_vectors(vectors: list[dict]) -> list[str]:
                 f"{where}: expect={expect!r} is not one of {EXPECT_VERDICTS}. A "
                 f"misspelling used to fall through to `no-crash`."
             )
+        if "payload" not in vec:
+            problems.append(
+                f"{where}: no `payload`. It is required: an absent payload used to be sent "
+                f"as zero bytes, so the vector tested empty input instead of its case. Pass "
+                f"\"payload\": \"\" to test empty input on purpose."
+            )
+        stem = repro_stem(vector_case(vec, i))
+        if stem in stems:
+            problems.append(
+                f"{where}: its repro file {stem}.input is also vector[{stems[stem]}]'s, so "
+                f"one finding's saved input would overwrite the other's. Rename one."
+            )
+        else:
+            stems[stem] = i
         if not str(vec.get("why") or "").strip():
             problems.append(
                 f"{where}: no `why`. The finding detail is rendered from it, so a "
@@ -391,7 +419,7 @@ def validate_vectors(vectors: list[dict]) -> list[str]:
 
 def check_vectors(r: Runner, findings: list[Finding], vectors: list[dict], mode: str) -> None:
     for i, vec in enumerate(vectors):
-        name = vec.get("name") or f"vector-{i}"
+        case = vector_case(vec, i)
         expect = str(vec["expect"]).strip().lower()
         why = vec["why"]
         raw = vec.get("payload")
@@ -417,7 +445,6 @@ def check_vectors(r: Runner, findings: list[Finding], vectors: list[dict], mode:
             delivery = "argv"
 
         out, err, rc, status = r.invoke(stdin_payload, argv_extra)
-        case = f"vector/{name}"
 
         if status == "timeout":
             ref = persist(r, case, repro, delivery)
