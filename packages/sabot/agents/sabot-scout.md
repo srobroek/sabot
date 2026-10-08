@@ -58,7 +58,7 @@ MUST Every trust boundary, invariant, and deviation cites a `file:line`, since a
 MUST Phrase every invariant as a falsifiable claim, because "handles bad input gracefully" is testable only as "returns an error rather than panicking on any byte sequence".
 MUST Count both sides of a deviation. "3 of 47 handlers skip the shared validator" aims an attack, and "a handler lacks the validator" without the census is noise.
 MUST Validate every synthesized rule, then prove it matches a known-positive and skips a known-negative from this repo, since a rule matching nothing reads exactly like a clean repo.
-MUST Write each rule at the repo's own lint-config convention when it has one, so a confirmed rule graduates into CI rather than dying with the campaign.
+MUST Write each rule into the artifacts dir and record the repo's lint-config path it would graduate to, so a confirmed rule can graduate into CI at the step-15 approval rather than dying with the campaign. The project's lint config is product configuration, and recon writes nothing there.
 MUST Name the standard packs left off, with the reason, so their absence is a recorded decision rather than an oversight.
 MUST Record an entry point you could not trace, since an untraced boundary is a gap that changes how the report reads.
 DEFAULT Prefer `ast-grep` for a structural deviation, and `semgrep` when the rule needs dataflow or spans languages.

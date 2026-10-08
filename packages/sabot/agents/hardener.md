@@ -25,9 +25,10 @@ the scanner or harness that must confirm the fix.
    one bug for another.
 7. Add a regression test beside the repo's existing tests for that module, holding
    the minimized input as a fixture.
-8. When a synthesized rule found this finding, graduate it into the repo's own lint
-   config per the graduation table in `references/recon.md`, so the class stays
-   checked after this campaign ends.
+8. When a synthesized rule found this finding and the recorded approval covers its
+   graduation, graduate it into the repo's own lint config per the graduation table
+   in `references/recon.md`, so the class stays checked after this campaign ends.
+   Without that approval, record the rule as proposed and leave the config alone.
 9. Stamp the wisp with the patch record and the verification result.
 
 ## What you CAN do
@@ -54,7 +55,7 @@ MUST Reproduce the finding before changing anything, since a fix never shown to 
 MUST Re-run the exact scanner or harness from the Brief after the fix and report its result even when the finding persists.
 MUST Fix the cause rather than the symptom. Widening a type to stop an overflow only moves the bug; catching an exception to stop a crash only hides it.
 MUST Write the regression test so it fails against the original code, because a test that passed before the fix proves nothing.
-MUST Graduate the rule that found the finding into the repo's own lint config, since the test guards this instance and only the rule guards the next one.
+MUST Graduate the rule that found the finding into the repo's own lint config when the recorded approval covers the graduation, since the test guards this instance and only the rule guards the next one. An unapproved graduation is a product-config edit nobody authorized; record it as proposed instead.
 MUST Report a fix that resisted verification as UNVERIFIED with the reason rather than as done.
 MUST Report a finding whose correct fix exceeds this Brief's scope as ESCALATED with what the real fix requires, rather than applying a partial one.
 DEFAULT Keep the change under roughly 30 lines; a larger fix means the finding needs a design decision the user should make.

@@ -139,13 +139,15 @@ commit from then on.
 
 | Rule outcome | Disposition |
 |---|---|
-| Produced a PROVEN or REACHABLE finding | graduate it: write it into the repo's own lint config so CI enforces it |
+| Produced a PROVEN or REACHABLE finding | propose graduation at the step-15 approval; on approval the hardener writes it into the repo's own lint config so CI enforces it |
 | Produced only HARDENING findings | keep it in the artifacts dir, and offer it as an opt-in in the report |
 | Matched nothing on a repo where the invariant is true | keep it in the artifacts dir as a guard against the invariant being broken later |
 | Failed its own known-positive test | INVALID, so record it and never report its zero matches as clean |
 
 Graduating a rule means placing it where the project's existing tooling picks it
-up, rather than in a directory only this skill reads:
+up, rather than in a directory only this skill reads. The project's lint config is
+product configuration, so recon only records the destination below; the write happens
+in step 15, under the approval that names it (`hardener-brief.md`, Lint-config edits):
 
 | Repo already has | Graduate to |
 |---|---|
@@ -155,7 +157,7 @@ up, rather than in a directory only this skill reads:
 | pre-commit hooks | a `opengrep` or `ast-grep` hook entry with the rule file |
 | no security lint config at all | propose one path in the report, and let the user decide rather than inventing a convention |
 
-MUST Graduate every rule behind a confirmed finding, since a fixed bug whose detection rule was thrown away is a bug free to return.
+MUST Propose every rule behind a confirmed finding for graduation, with its destination from the table above, since a fixed bug whose detection rule was thrown away is a bug free to return. Write it into the project's config only under a step-15 approval that names it; recon and every step before 15 write rules to the artifacts dir alone.
 MUST Pair a graduated rule with the regression test for the same finding. The test proves this instance is fixed, and the rule prevents the next instance.
 MUST Leave a graduated rule uncommitted and list it in the report, because committing is the user's call.
 MUST Keep a rule that matched nothing when its invariant is real, since its value is catching the day someone breaks the invariant.
