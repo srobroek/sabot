@@ -56,7 +56,7 @@ NOT Never hand-write a corpus a listed tool would generate. A hand-written corpu
 | dharma | grammar or DSL | generation from a compact grammar file | `dharma -grammars <g> -count <n>` (python image) | lighter than Grammarinator, and no ANTLR dependency |
 | hypothesis | Python properties | property-based generation with shrinking | `pytest` on the property tests | shrinking is built in, so no separate minimizer is needed |
 | hypofuzz | Python properties | coverage-guided hypothesis | `hypothesis fuzz` | adds coverage feedback to existing hypothesis tests |
-| proptest, quickcheck | Rust properties | property-based with shrinking | `cargo test` with `PROPTEST_CASES` | same role as hypothesis, and native |
+| proptest, quickcheck | Rust properties | property-based with shrinking | `cargo test --no-fail-fast` with `PROPTEST_CASES` | same role as hypothesis, and native |
 | fast-check | JS/TS properties | property-based with shrinking | `npx vitest run` | same role, and native |
 | atheris | Python bytes | coverage-guided libFuzzer for CPython | `python <harness>.py -max_total_time=<wall_s>` | pairs with `atheris_libprotobuf_mutator` for protobuf |
 | jazzer.js | JS/TS bytes | coverage-guided libFuzzer for Node | `npx jazzer <harness> -- -max_total_time=<wall_s>` | the JS equivalent of atheris |

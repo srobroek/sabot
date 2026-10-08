@@ -163,19 +163,24 @@ needs = ["surfaces"]
 labels = ["sab-audit", "non-work"]
 description = """Step 3. LOAD references/tooling.md and references/installer.md.
 
-Run scripts/install-tools.sh --probe as a host preflight. DELEGATE the image build,
-the dev-dep bake, and --assert-tools to a provisioner agent, which returns success
-ONLY when every manifest tool answered in-image. A provisioned image on a partial
-tool set is a coverage gap that reports as coverage.
+Run scripts/install-tools.sh --probe --images <images> as a host preflight, naming the
+sabot/<name>:1 images for the target's language stacks (the `stacks` field of
+scripts/detect-stacks.py), or `base` alone. An image not built yet is recorded for the
+proposal; it is built in the provision step, after approval.
+
+Run scripts/run-preflight.py --target <dir> --run-id <run_id> --skip-image-probe. It
+measures the runtime's memory pool and CPUs and writes <dir>/.sabot/<run_id>/preflight.json;
+a non-zero exit, including an unknown pool, ABORTS the run. Its
+concurrency.max_parallel_nodes sets the waves the budget table divides the nodes into.
 
 Propose the tool set per surface as a tiered table (default-on ON, opt-in OFF with a
 reason) together with a budget table: wall-clock per harness, parallel jobs, memory
-cap. Stamp `budget` on the epic.
+cap, the waves, and the worst-case wall-clock as `total_s`. Stamp `budget` on the epic.
 
-Do NOT list an action the hard rules forbid, even as unavailable.
+Do NOT list an action the hard rules forbid, even as unavailable. Do NOT build or
+extend an image here: the build installs what the user has not yet approved.
 
-Completion: `budget` stamped, and the provisioner's per-image assert results written
-to the artifacts dir."""
+Completion: `budget` stamped with `total_s`, and preflight.json written."""
 
 [steps.metadata]
 skill_hints = "sabot:sabotage"
@@ -201,13 +206,41 @@ Resolve with `bd close <gate-id>` or `bd gate resolve <gate-id>`; both work."""
 type = "human"
 
 [[steps]]
+id = "provision"
+title = "step 3 provision the approved images {{run_id}}"
+type = "task"
+# `tools-approval` is the gate this step waits on: the build runs networked installs of
+# the tool set the gate approves, so without the edge it built before the user had seen
+# the proposal. `probe-propose` is the co-anchor for the autonomous pour, which filters
+# the gate out.
+needs = ["probe-propose", "tools-approval"]
+labels = ["sab-audit", "non-work"]
+description = """Step 3, after approval. DELEGATE the image build, the dev-dep bake, and
+--assert-tools to ONE spawned provisioner agent (`task` in OMP, `general-purpose` in
+Claude Code), which runs the isolation.md Provisioning flow: build any missing surface
+image, extend each with the target's dev-deps via scripts/build-ext-image.sh, then
+assert it.
+
+The provisioner returns success ONLY when scripts/install-tools.sh --probe --images
+<images> passes and run-contained.sh --assert-tools answers for every manifest tool in
+each ext image. A provisioned image on a partial tool set is a coverage gap that
+reports as coverage. It returns the ext-image tags and the stack map, never the build
+output.
+
+Completion: the provisioner returned the ext-image tags and stack map, and its per-image
+assert results are written to the artifacts dir."""
+
+[steps.metadata]
+skill_hints = "sabot:sabotage"
+execution_agent_type = "general-purpose"
+
+[[steps]]
 id = "pre-pass"
 title = "step 4 repo-global pre-pass {{run_id}}"
 type = "task"
-# `tools-approval` is the gate this step waits on: every scanner and the baseline suite run
-# here, so without the edge they ran before the user had approved the tool set or budget.
-# `probe-propose` is the co-anchor for the autonomous pour, which filters the gate out.
-needs = ["probe-propose", "tools-approval"]
+# `provision` carries the `tools-approval` edge: every scanner and the baseline suite run
+# here, in the images it built, so this step waits on the approved, asserted images.
+needs = ["provision"]
 labels = ["sab-audit", "non-work"]
 description = """Step 4. Several facts are identical for every surface, so computing
 them per surface runs the same work N times.
@@ -330,7 +363,11 @@ DAG edge to each other, and this file is their only channel. Validate an environ
 fact on ONE node before writing it into every Brief; a wrong fact broadcast to all
 nodes once filled the host disk. A retraction quotes the original wording.
 
-Spawn one `gremlin` per surface node, in parallel. Each runs its surface's scanners plus
+Spawn one `gremlin` per surface node, in parallel up to the admitted concurrency. Before
+each node's container starts, run scripts/admit-node.py --preflight
+<dir>/.sabot/<run_id>/preflight.json --mem-cap <MB>, with one --running-cap <MB> per node
+still running, and dispatch only on exit 0; exit 3 means wait for a node to finish. Each
+runs its surface's scanners plus
 the rules recon synthesized, claims its harness wisps with `bd ready --parent <node>
 --label sab-harness --claim` (atomic, so no verify-then-steal race), executes them
 inside the approved budget against LOCAL code only, and reads for what scanners miss:
@@ -506,9 +543,9 @@ description = """Step 13. LOAD references/network-stage.md. OPT-IN ONLY, and sep
 from every other consent.
 
 Runs once in a container WITH egress, and performs LOOKUPS rather than attacks: secret
-liveness, a fresh advisory DB against the baked one, action-tag drift, registry-only
-rule packs. Never probe, fuzz, or attack anything remote. A tool that only needs a
-one-time DOWNLOAD belongs in the image instead.
+liveness, a fresh advisory DB against the baked one, Rust advisories, action-ref
+resolution, registry-only rule packs. Never probe, fuzz, or attack anything remote. A
+tool that only needs a one-time DOWNLOAD belongs in the image instead.
 
 Verifying a secret sends it to the provider, so that needs its own second consent, and
 a third party's key is never verified at all. Never print a credential: report

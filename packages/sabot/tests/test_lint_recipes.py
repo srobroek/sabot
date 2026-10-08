@@ -133,12 +133,13 @@ def test_a_directory_is_walked_and_skip_dirs_are_ignored(tmp_path):
     assert json.loads(p.stdout)["violations"] == []
 
 
-def test_the_linter_runs_over_the_real_skill_tree_without_crashing():
-    # Whether the real tree is clean is a wiring question for files this suite does not
-    # own, so it is reported as a patch rather than asserted here.
-    p = run(str(SKILL), "--json")
-    assert p.returncode in (0, EXIT_VIOLATION), p.stderr
-    json.loads(p.stdout)
+def test_the_shipped_skill_and_agents_pass_their_own_lint():
+    # The package ships the recipes this linter forbids unless its own tree is held to
+    # them: `--metrics off` as a MUST, `cargo test` without --no-fail-fast in three run
+    # recipes, and gosec piped through tee were all live in the shipped references.
+    p = run(str(SKILL), str(SKILL.parents[1] / "agents"), "--json")
+    assert p.returncode == 0, p.stdout
+    assert json.loads(p.stdout)["violations"] == []
 
 
 def test_every_self_hit_on_the_rule_table_sits_on_a_pattern_or_message_line(tmp_path):

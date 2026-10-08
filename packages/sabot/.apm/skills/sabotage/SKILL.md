@@ -63,9 +63,12 @@ non-interactive run then takes the defaults below and records each as a gap.
    here; a detected surface the user does not want scanned can be dropped. This is
    one message with question 3, not a separate prompt.
 3. **Which tools, and what fuzz budget?** Run
-   `<skill-dir>/scripts/install-tools.sh --probe` (a host preflight: confirms the
-   container runtime, `bd`, and `git`, and which surface images exist; it does not
-   install scanners on the host, which now run in the image). In one message, propose
+   `<skill-dir>/scripts/install-tools.sh --probe --images <images>`, naming the
+   `sabot/<name>:1` images this campaign uses (the detected language stacks, such as
+   `rust,node`, or `base` alone). Without `--images` every language image is required.
+   It is a host preflight: it confirms the container runtime, `bd`, and `git`, and
+   asserts each named image's tools; it does not install scanners on the host, which
+   now run in the image. In one message, propose
    the full thorough tool set per detected surface as a tiered table (default-on
    pre-selected ON, opt-in shown OFF with a reason) together with a fuzz budget
    table covering wall-clock per harness, parallel jobs, and memory cap. Then wait

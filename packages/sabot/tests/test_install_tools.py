@@ -56,6 +56,20 @@ def test_executable_manifests_name_no_library():
                 f"{lib} has no CLI; assert it in IMAGE_LIBS_{surface} by import instead"
 
 
+def test_the_isolation_assert_table_is_the_same_manifest():
+    """isolation.md claims its assert table IS the preflight manifest, and it drifted:
+    the python row still named semgrep after the drop, and the optional scanners and
+    heavy images had no row at all. Each row must equal its IMAGE_TOOLS_ list."""
+    iso = (SCRIPT.parents[1] / "references/isolation.md").read_text()
+    rows = dict(re.findall(r"^\| `sabot/([a-z-]+):1`(?: \(optional\))? \| `([^`]+)` \|",
+                           iso, re.M))
+    images = re.search(r'^SURFACES="([^"]*)"', BODY, re.M).group(1).split()
+    images += re.search(r'^OPTIONAL_SURFACES="([^"]*)"', BODY, re.M).group(1).split()
+    assert set(rows) == set(images), (sorted(rows), sorted(images))
+    for image in images:
+        assert rows[image].split(",") == manifest(image.replace("-", "_")), image
+
+
 def test_library_manifests_import_the_fuzz_harness_packages():
     """The packages a harness imports must be proven to LOAD, not merely installed."""
     assert 'IMAGE_LIBS_python=' in BODY

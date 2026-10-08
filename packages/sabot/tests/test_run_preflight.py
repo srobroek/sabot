@@ -276,16 +276,33 @@ def test_the_retry_ladder_degrades_the_recipe_before_raising_memory(tmp_path):
     assert any("ENOSPC" in reason for reason in rec["no_auto_retry"])
 
 
-def test_a_pool_read_from_the_laptop_clamps_concurrency_to_one(tmp_path):
-    # sysctl reports the machine, not the VM the containers run in. Planning three nodes
-    # against a number the runtime never confirmed is how a node gets OOM-killed.
+def test_an_unknown_runtime_pool_is_refused_not_planned_against_the_laptop(tmp_path):
+    # sysctl reports the machine, not the VM the containers run in. A laptop figure once
+    # filled usable_mb and passed target_fits_memory, so admit-node approved nodes against a
+    # pool many times the VM's. An unknown pool must fail the preflight instead.
     target = make_target(tmp_path)
     bindir, env = make_env(tmp_path)
     (bindir / "docker").write_text("#!/bin/sh\ncase \"$1\" in\n  info) exit 1 ;;\n"
                                    "  context) echo default ;;\n  *) exit 0 ;;\nesac\n")
+    p, rec = run(target, env, "--min-free-mb", "1")
+    assert p.returncode == EXIT_PRECONDITION, p.stdout + p.stderr
+    assert checks(rec)["target_fits_memory"] is False
+    assert rec["memory"]["measured_from_runtime"] is False
+    assert rec["memory"]["usable_mb"] is None
+    assert rec["memory"]["pool_total_mb"] is None
+    assert rec["admission"]["usable_mb"] is None
+    assert rec["concurrency"]["max_parallel_nodes"] == 1
+    # The ladder and its env stay in the record, so a refused run still documents them.
+    assert rec["retry_ladder"][0]["raises_cap"] is False
+    assert rec["retry_ladder"][0]["env"]
+
+
+def test_the_admission_command_passes_one_cap_per_running_node(tmp_path):
+    target = make_target(tmp_path)
+    _, env = make_env(tmp_path)
     _, rec = run(target, env, "--min-free-mb", "1")
-    if rec["memory"]["measured_from_runtime"] is False:
-        assert rec["concurrency"]["max_parallel_nodes"] == 1
+    assert "--running-cap" in rec["admission"]["check_with"]
+    assert "--running-mb" not in rec["admission"]["check_with"]
 
 
 def test_a_cdylib_target_is_estimated_larger_than_one_without(tmp_path):

@@ -14,8 +14,10 @@ Usage:
           bake_units carry {stack, dir, fetch, resolver}, so a caller has everything
           structured. A python unit also carries `requirements`, the pins its fetch
           installs from `.sabot-requirements.txt`, which the caller writes beside the
-          manifest. A unit with no usable resolver carries `fetch: null` and a
-          `skip_reason`, so the gap is reported rather than masked.
+          manifest. A rust unit carries `system_packages`, the distro -dev packages its
+          Cargo.lock's -sys crates link through pkg-config. A unit with no usable
+          resolver carries `fetch: null` and a `skip_reason`, so the gap is reported
+          rather than masked.
   --bake  emit the provision command lines (`cd <dir> && <fetch>`), one per bake
           unit, for a Dockerfile RUN or an `sh -c` at image build. These are command
           content, not a standalone script: the caller runs them where Docker RUN
@@ -71,6 +73,21 @@ PIP_INSTALL = "pip3 install --no-cache-dir --break-system-packages --only-binary
 PIP_REQUIREMENTS = ".sabot-requirements.txt"
 PY_DEV_GROUPS = ("dev", "test", "tests")
 
+# Native libraries a -sys crate links through pkg-config, keyed by crate name: (Debian
+# -dev package, pkg-config module). The rust image carries none of them, because they
+# serve one kind of target, a Tauri or GTK desktop app, and every other Rust campaign
+# would pay for the stack. The ext image installs them for a target whose Cargo.lock
+# names the crate. Measured on platevault: `tauri = { features = ["wry"] }` pulls
+# webkit2gtk-sys -> gtk-sys -> glib-sys, whose build script shells `pkg-config
+# glib-2.0 >= 2.70`, and with no .pc file all 199 Tauri command handlers were NOT
+# EXECUTED. --network none leaves no run-time repair.
+SYS_CRATE_PACKAGES = {
+    "glib-sys": ("libglib2.0-dev", "glib-2.0"),
+    "gtk-sys": ("libgtk-3-dev", "gtk+-3.0"),
+    "webkit2gtk-sys": ("libwebkit2gtk-4.1-dev", "webkit2gtk-4.1"),
+    "soup3-sys": ("libsoup-3.0-dev", "libsoup-3.0"),
+}
+
 # Agentic-tooling config is not part of any target (targeting.md, Excludes), so its
 # manifests are not bake units either. Measured: platevault tracks
 # .agents/skills/react-components/package-lock.json, which made a node bake unit inside a
@@ -99,6 +116,20 @@ def node_fetch(locks):
         if lock in locks:
             return resolver, NODE_NO_SCRIPTS + cmd
     return "npm install", NODE_NO_SCRIPTS + "npm install --ignore-scripts"
+
+
+def cargo_system_packages(repo, directory, locks):
+    """The SYS_CRATE_PACKAGES entries whose crate the unit's Cargo.lock names.
+
+    No lockfile means no resolved graph to read, so nothing is inferred: an unlocked
+    target's -sys crates surface as a build-script failure, not as a guessed package.
+    """
+    if "Cargo.lock" not in locks:
+        return []
+    doc, _ = _read_toml(os.path.join(repo, directory, "Cargo.lock"))
+    names = {p.get("name") for p in (doc or {}).get("package", [])}
+    return [{"crate": crate, "apt": apt, "pkg_config": pc}
+            for crate, (apt, pc) in SYS_CRATE_PACKAGES.items() if crate in names]
 
 
 def _read_toml(path):
@@ -207,6 +238,7 @@ def detect(repo):
         if stack == "rust":
             entry.update(resolver="cargo fetch", fetch="cargo fetch")
             entry["workspace_root"] = is_cargo_workspace(repo, rel)
+            entry["system_packages"] = cargo_system_packages(repo, directory, found_locks)
         elif stack == "go":
             entry.update(resolver="go mod download", fetch="go mod download")
         elif stack == "node":

@@ -163,6 +163,46 @@ def test_dep_cache_is_persistent_not_scratch(tmp_path):
     assert "/scratch" not in df
 
 
+TAURI_LOCK = "".join(
+    f'[[package]]\nname = "{name}"\nversion = "0.1.0"\n\n'
+    for name in ("app", "glib-sys", "gtk-sys", "webkit2gtk-sys", "soup3-sys", "serde")
+)
+
+
+def test_a_tauri_target_gets_its_gtk_stack_in_the_ext_image(tmp_path):
+    """The GTK/webkit stack moved out of the rust image into the ext layer.
+
+    A Tauri crate cannot COMPILE without it: glib-sys shells `pkg-config glib-2.0`, and
+    with no .pc file 199 platevault handlers were NOT EXECUTED. Every other Rust target
+    paid for the stack, so only a target whose lock names the -sys crates installs it.
+    """
+    make_repo(tmp_path, {"Cargo.toml": "[package]\nname='app'\n", "Cargo.lock": TAURI_LOCK})
+    df = dry_run(tmp_path)
+    lines = df.splitlines()
+    apt = next((i for i, l in enumerate(lines) if "apt-get install" in l), None)
+    assert apt is not None, df
+    for pkg in ("libglib2.0-dev", "libgtk-3-dev", "libwebkit2gtk-4.1-dev",
+                "libsoup-3.0-dev"):
+        assert pkg in lines[apt], f"{pkg} missing from {lines[apt]}"
+    # Installed as root, before the build drops to the fetch uid.
+    assert apt < lines.index("USER 1000:1000")
+    assert lines.index("USER root") < apt
+    # pkg-config RESOLVING each module is the assertion; the binary answering was not.
+    assert 'pkg-config --exists "$pc"' in df
+    for pc in ("glib-2.0", "gtk+-3.0", "webkit2gtk-4.1", "libsoup-3.0"):
+        assert pc in df
+
+
+def test_a_plain_rust_target_installs_no_system_packages(tmp_path):
+    make_repo(tmp_path, {"Cargo.toml": "[package]\nname='x'\n", "Cargo.lock": ""})
+    assert "apt-get" not in dry_run(tmp_path)
+
+
+def test_a_skipped_rust_unit_contributes_no_system_packages(tmp_path):
+    make_repo(tmp_path, {"Cargo.toml": "[package]\nname='app'\n", "Cargo.lock": TAURI_LOCK})
+    assert "apt-get" not in dry_run(tmp_path, stack_skip="rust")
+
+
 @pytest.fixture
 def stub_docker(tmp_path):
     """A fake `docker` on PATH: image inspect ok, build records its argv to a file."""

@@ -225,6 +225,8 @@ def test_every_gate_blocks_the_step_it_approves(path):
 # readiness bug when it is missing: approval before execution, harnesses before the attack
 # that runs them, every finding producer before tiering and the report.
 REQUIRED_ORDER = [
+    ("tools-approval", "provision"),
+    ("provision", "pre-pass"),
     ("tools-approval", "pre-pass"),
     ("patch-approval", "remediate"),
     ("author-harnesses", "attack"),
@@ -269,6 +271,27 @@ def test_no_execution_step_starts_before_the_tools_approval():
             if "tools-approval" not in _active_ancestors(steps, conditions, values, step["id"]):
                 early.append((step["id"], dict(values)))
     assert not early, f"step(s) ready before the tools approval: {early[:5]} ({len(early)} total)"
+
+
+def test_the_proposal_step_builds_no_image():
+    # Step 3 provisioned the images, then proposed the tool set those images held and
+    # waited for approval: the build had already run networked installs of a toolset the
+    # user had not seen. Building belongs to `provision`, behind the gate.
+    doc = load(FORMULA_DIR / "sabot-campaign.formula.toml")
+    by_id = {s["id"]: s for s in doc["steps"]}
+    assert "provision" in by_id, "provisioning needs its own step behind tools-approval"
+    propose = by_id["probe-propose"]["description"]
+    assert "build-ext-image" not in propose and "provisioner" not in propose, propose
+    assert "build-ext-image" in by_id["provision"]["description"]
+    # Both preflights run before the proposal, and the probe is scoped to the campaign.
+    assert "install-tools.sh --probe --images" in propose
+    assert "run-preflight.py" in propose
+
+
+def test_the_attack_step_admits_each_node_before_it_starts():
+    doc = load(FORMULA_DIR / "sabot-campaign.formula.toml")
+    attack = next(s for s in doc["steps"] if s["id"] == "attack")["description"]
+    assert "admit-node.py --preflight" in attack and "--running-cap" in attack
 
 
 def _report_json():

@@ -115,8 +115,9 @@ real robustness finding.
 opt-in live-spawn stage (`agentic-fuzz.md`) is the only route that runs the
 definition for real, under its own consent. `sabot-fuzzer` writes a scenario table crossing each payload class from
 `references/corpora/prompt-injection.md` against each entry point where untrusted
-content enters, and `gremlin` evaluates whether the definition contains a rule
-that stops it.
+content enters, and `gremlin` records whether the definition contains a rule that
+addresses it. That record is a hypothesis capped at REACHABLE; only a live-spawn case
+shows whether the agent holds to the rule.
 
 ## Seed corpus
 

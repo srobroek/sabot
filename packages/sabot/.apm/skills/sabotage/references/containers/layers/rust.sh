@@ -54,18 +54,13 @@ export RUSTUP_HOME=/usr/local/rustup
 export CARGO_HOME=/usr/local/cargo
 export PATH=/usr/local/cargo/bin:$PATH
 
-# The GTK/webkit stack is here because a Tauri app's own crate cannot COMPILE without
-# it, so its absence is not a missing linter but an unbuildable target. Measured on
-# platevault: `tauri = { features = ["wry"] }` pulls webkit2gtk-sys -> gtk-sys ->
-# glib-sys, whose build script shells `pkg-config glib-2.0 >= 2.70`. The image carried
-# /usr/bin/pkg-config and ZERO matching .pc files, so every one of 199 Tauri command
-# handlers was NOT EXECUTED -- and under --network none apt cannot repair it at run
-# time. `test` feature plus MockRuntime were already wired in the target's own tests, so
-# this apt line is the whole distance between 0 and 134 handlers executable.
+# Only the toolchain's own C dependencies are here. A target's native -sys libraries (a
+# Tauri app's GTK/webkit stack) are installed by the ext image, from the target's
+# Cargo.lock: build-ext-image.sh reads detect-stacks.py's `system_packages` and asserts
+# pkg-config resolves each one, so every other Rust campaign does not carry the stack.
 apt-get update -q
 apt-get install -y --no-install-recommends \
-	gcc g++ libc6-dev pkg-config libssl-dev \
-	libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev
+	gcc g++ libc6-dev pkg-config libssl-dev
 rm -rf /var/lib/apt/lists/*
 
 # rustup detects the host arch itself, so the download is arch-correct with no map.
@@ -157,14 +152,6 @@ chmod -R a+rX /usr/local/rustup /usr/local/cargo /usr/local/advisory-db /deps
 rustc --version
 cargo fmt --version
 cargo clippy --version
-# Assert pkg-config RESOLVES the GTK stack, not just that pkg-config exists. The two are
-# what made 199 handlers unmeasurable: the binary answered and no .pc file was installed,
-# which surfaces as a glib-sys build-script failure a gremlin reads as a target defect.
-for pc in glib-2.0 gtk+-3.0 webkit2gtk-4.1 libsoup-3.0; do
-	pkg-config --exists "$pc" ||
-		{ echo "rust.sh: pkg-config cannot resolve $pc; a Tauri target cannot build" >&2; exit 1; }
-done
-echo "pkg-config resolves the GTK/webkit stack"
 cargo +nightly --version
 cargo-fuzz --version
 cargo-audit --version

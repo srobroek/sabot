@@ -55,23 +55,31 @@ MUST Escalate memory at most ONCE, to `build_mem_mb`, and record it as an explic
 NOT Never retry into a disk failure. Stop, report, tear down the build residue, verify headroom, then resume. Retrying into a full disk is what corrupted the runtime.
 NOT Never raise the budget mid-campaign without asking. A budget the user approved is the authorization for the run.
 
-### Time is opt-in; memory and disk are not
+### Time: the campaign ceiling and the per-run deadline
 
 Memory and disk are **safety** limits: exceeding either destroys the run and the container
 runtime with it, so the wrapper enforces both and refuses rather than asks. Time is a
-**budget** and belongs to the user, so a campaign is not time-capped by default.
+**budget** the user approves at step 3, and it has three parts, each held by the one party
+positioned to observe it:
 
-There is no `total_s` MUST any more. The former campaign-wide ceiling was unobservable — a
-21-node run overran it by roughly fiftyfold and nothing noticed, because the phases are
-parallel subagents with no shared clock and no supervisor holding the deadline. An
-unenforceable MUST is the same defect this skill audits targets for, so it is deleted
-rather than restated.
+| Limit | Set | Observed and enforced by |
+|---|---|---|
+| `wall_s` | step 3, per harness | the runner's own time flag (table below) |
+| `total_s` | step 3, for the whole campaign, stamped in the epic's `budget` | the main thread, at every wave boundary |
+| a per-run deadline | optional, only when the user asks for one | the container, via `run-contained.sh --timeout <s>` |
 
-When the user does set a deadline, it is enforced by the container:
+`total_s` defaults to the worst-case wall-clock the budget table states: the harness count
+times `wall_s`, divided across the affordable concurrency and rounded up to whole waves,
+plus the build phase. A 21-node run once overran an approved 1800 s ceiling roughly
+fiftyfold because no role compared elapsed time to it: the phases are parallel subagents
+with no shared clock. The orchestrator dispatches every wave, so it is the one observer
+that sees the total.
 
-MUST Pass a user-set deadline as `run-contained.sh --timeout <s>`, so the container stops itself. Never implement a deadline by having an agent watch the clock.
-MUST Treat expiry as a normal outcome with partial results. The wrapper sends SIGTERM, waits 30 s, then SIGKILLs, and copies the findings out either way; the status file records `rc=124 deadline=1`.
-MUST Record every harness that had not yet run at expiry as a coverage gap with its remaining budget, so partial results are never read as a complete pass.
+MUST Stamp `total_s` in the approved budget. `report-json.py` reports a budget without it as a stamping gap.
+MUST Compare elapsed wall-clock against `total_s` on the main thread before dispatching each wave, and stop to re-approve before a wave would exceed it. Never hand the campaign ceiling to a gremlin, which sees only its own harness caps.
+MUST Pass a user-set per-run deadline as `run-contained.sh --timeout <s>`, so the container stops itself. Never implement that deadline by having an agent watch the clock.
+MUST Treat a per-run deadline's expiry as a normal outcome with partial results. The wrapper sends SIGTERM, waits 30 s, then SIGKILLs, and copies the findings out either way; the status file records `rc=124 deadline=1`.
+MUST Record every harness that had not yet run at a deadline or at the `total_s` stop as a coverage gap with its remaining budget, so partial results are never read as a complete pass.
 
 ### A resource failure is an INVALID run
 
@@ -109,14 +117,14 @@ NOT Never read a SIGKILL as a target defect or a harness result. It measured not
 | Language | Command | Time flag | Crash artifact |
 |---|---|---|---|
 | Rust | `cargo fuzz run <target> -- -max_total_time=<wall_s> -rss_limit_mb=<mem_mb>` | `-max_total_time` | `fuzz/artifacts/<target>/crash-*` |
-| Rust (property) | `cargo test --release <name>` with `PROPTEST_CASES=<n>` | case count | `proptest-regressions/*.txt` |
+| Rust (property) | `cargo test --release --no-fail-fast <name>` with `PROPTEST_CASES=<n>` | case count | `proptest-regressions/*.txt` |
 | Go | `go test -fuzz=<Fuzz> -fuzztime=<wall_s>s -parallel=<jobs>` | `-fuzztime` | `testdata/fuzz/<Fuzz>/*` |
 | Python | `python -m atheris <harness>.py -max_total_time=<wall_s>` | `-max_total_time` | stderr repro plus written input |
 | Python (property) | `pytest --hypothesis-show-statistics` | derive from `deadline` and `max_examples` | `.hypothesis/examples/` |
 | JS/TS | `npx jazzer <harness> -- -max_total_time=<wall_s>` | `-max_total_time` | crash file in cwd |
 | JS/TS (property) | `npx vitest run` with fast-check | `numRuns` | counterexample in the failure output |
 | C/C++ | `<harness> -max_total_time=<wall_s> -rss_limit_mb=<mem_mb>` | `-max_total_time` | `crash-*` in cwd |
-| C/C++ (AFL++) | `afl-fuzz -i <in> -o <out> -V <wall_s> -m <mem_mb> -- <bin> @@` | `-V` | `<out>/default/crashes/*` |
+| C/C++ (AFL++, NOT BAKED: an approved extension image must add it) | `afl-fuzz -i <in> -o <out> -V <wall_s> -m <mem_mb> -- <bin> @@` | `-V` | `<out>/default/crashes/*` |
 | Any CLI or hook | `scripts/fuzz-cli.py --target <t> --timeout <s> --mem-mb <m> --vectors <f>` | `--timeout` per invocation | `--artifacts-dir` |
 
 MUST Build with sanitizers where the language offers them: `RUSTFLAGS="-Zsanitizer=address"` under `cargo fuzz`, `-fsanitize=address,undefined` for C and C++, and `-race` for Go concurrency harnesses. A memory bug without a sanitizer is silent corruption rather than a crash.

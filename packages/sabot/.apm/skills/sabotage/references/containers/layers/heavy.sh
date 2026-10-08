@@ -31,6 +31,11 @@ set -eux
 JOERN_VERSION=v4.0.604
 # renovate: datasource=github-releases depName=zaproxy/zaproxy
 ZAP_VERSION=v2.17.0
+# ZAP publishes no checksum file beside its Core zip, so the digest is pinned here: the
+# GitHub release asset digest, which matched a local sha256 of the download. A ZAP_VERSION
+# bump without a new digest fails the build on the mismatch rather than installing
+# whatever the URL now serves.
+ZAP_CORE_SHA256=0cb73b7f72d12c263fb61de304edb82a455d7aa4e1813c216c061765c306f5b7
 
 # Joern names arm64 as arm64 and x86_64 as x86_64, which is dpkg's amd64. Unlike the go
 # distribution the spelling differs, so map it rather than reusing the dpkg name.
@@ -82,6 +87,7 @@ ln -sf /opt/joern-cli/joern-parse /usr/local/bin/joern-parse
 zap_ver="${ZAP_VERSION#v}"
 curl -fsSL -o /tmp/zap.zip \
 	"https://github.com/zaproxy/zaproxy/releases/download/${ZAP_VERSION}/ZAP_${zap_ver}_Core.zip"
+echo "${ZAP_CORE_SHA256}  /tmp/zap.zip" | sha256sum -c --strict -
 unzip -q /tmp/zap.zip -d /opt
 rm /tmp/zap.zip
 [ -d "/opt/ZAP_${zap_ver}" ] || {

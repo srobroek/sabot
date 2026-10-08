@@ -74,22 +74,41 @@ merge before creating any bead:
 MUST Compute `harnessable / total entry points` per node and stamp it on the node as `coverage_ratio` before spawning anything. One node in one run covered 13 of 706 entry points, which is a sample, and no artifact said so. A ratio on the bead makes the sample declared instead of discovered at report time.
 MUST Split a node rather than sampling it. A node that cannot be covered inside the budget becomes several nodes; where a residue must stay uncovered, name it a declared sample with its ratio in the coverage wisp.
 MUST Translate an operator's stated unit into node beads explicitly. An instruction like "one run per crate" is a sizing decision, and leaving it unrecorded means the orchestrator improvises the split and nothing checks it.
-MUST Decide node size and parallelism together. Each node holds a container for the length of its run, so the node count and the concurrent-container ceiling are one decision: total nodes divided by the affordable concurrency gives the number of waves, and a node sized past the budget adds a wave rather than coverage.
+MUST Decide node size and parallelism together. Each node holds a container for the length of its run, so the node count and the concurrent-container ceiling are one decision: total nodes divided by the affordable concurrency gives the number of waves, and a node sized past the budget adds a wave rather than coverage. The affordable concurrency is `concurrency.max_parallel_nodes` in the `preflight.json` that step 3 writes, and `admit-node.py` enforces it per node at dispatch (step 8), so revisit the node count once that record exists.
 
 MUST Treat a file count of ZERO as a claim to verify rather than an empty surface, and re-run the count with the tool's own hidden-file and ignore-file filters disabled. `fd` and `rg` both skip dotdirs and honour `.gitignore` by default, so a target whose code lives under a dotted directory counts as empty and its surface reads as absent. Measured: `fd -e sh . packages/sabot` returned 0 while `fd -u -e sh .` returned 10, every one of them under `.apm/`; a campaign that trusted the first number would have reported a clean shell audit of ten unopened files. This is the same shape as the empty-query rule in `beads-store.md`, applied to detection instead of to `bd`.
 MUST Record the entry points before step 5. A fuzzer given no entry points invents its own scope and writes harnesses for code nobody calls.
 MUST Record each entry point as a bare `file:line` with no threat annotation. Do not mark which entries "map onto the stated threat", label a parser "hostile-response", or rank them by suspected relevance. That annotation is the orchestrator's hypothesis, and it reaches the sabot-scout through the entry-point list and narrows the census to the guessed spot. The user's threat orders the REPORT (stamped on the epic), never the recon input.
 
-## Step 3: probe, propose, wait
+## Step 3: probe, propose, wait, then provision
 
-1. Run `install-tools.sh --probe` (host preflight: runtime + `bd` + `git`, and which
-   surface images exist). Then DELEGATE provisioning to a spawned agent rather than
-   running the builds inline: the build layers, `cargo fetch`, `npm ci`, and
-   `--assert-tools` output are exactly the noisy tool payloads that flood the
-   orchestrator's context. Spawn one provisioner (a `general-purpose` agent) Briefed
-   with the target dir, the detected surfaces, and the base image tags, told to run
-   the `isolation.md` Provisioning flow: build any missing surface image, extend each
-   with the target's dev-deps via
+1. Run `install-tools.sh --probe --images <images>`, where `<images>` names the
+   `sabot/<name>:1` images for the target's language stacks (the `stacks` field of
+   `scripts/detect-stacks.py --repo <dir>`), such as `rust,node`, or `base` alone.
+   It is the host preflight: runtime + `bd` + `git`, and an assertion that each named
+   image's tools answer inside it. An image that is not built yet fails here; record it
+   for the proposal, since it is built in item 7, after approval.
+2. Run `scripts/run-preflight.py --target <dir> --run-id <id> --skip-image-probe`. It
+   reads the container runtime's own memory and CPU count, estimates the per-node cost
+   from the target, and writes `<dir>/.sabot/<id>/preflight.json` (`run-layout.md`). It
+   exits 3 on any unmet precondition, including a pool the runtime did not report;
+   ABORT the run on a non-zero exit. Its `concurrency.max_parallel_nodes` and
+   `cpu.jobs_per_node` are what the budget table divides by.
+3. Build the proposal per `installer.md`: every viable tool for each detected
+   surface, default-on pre-selected ON, opt-in shown OFF with its reason, and the
+   images item 1 found missing.
+4. Build the budget table per `fuzzing.md`, stating the harness count, the waves
+   (nodes divided by `max_parallel_nodes`), and the worst-case wall-clock, which
+   becomes `total_s`, so the user approves a duration.
+5. Stop and wait. "go" accepts the tool set and the budget.
+6. Stamp the approved budget onto the run epic, so a resumed campaign reuses it.
+7. Only now provision, and DELEGATE it to a spawned agent rather than running the
+   builds inline: the build layers, `cargo fetch`, `npm ci`, and `--assert-tools`
+   output are exactly the noisy tool payloads that flood the orchestrator's context.
+   Spawn one provisioner (a `task` agent in OMP, `general-purpose` in Claude Code)
+   Briefed with the target dir, the detected surfaces, the approved tool set, and the
+   base image tags, told to run the `isolation.md` Provisioning flow: build any missing
+   surface image, extend each with the target's dev-deps via
    `scripts/build-ext-image.sh --target <dir> --base sabot/<surface>:1 --tag sabot/<surface>-ext:1`
    (it runs `detect-stacks.py`, writes a thin Dockerfile copying only the
    manifests+lockfiles, and builds the layer keyed on the lock), then `--assert-tools`
@@ -97,17 +116,11 @@ MUST Record each entry point as a bare `file:line` with no threat annotation. Do
    the stack map, with each per-image assert result written to the artifacts dir.
    Tools run in the image, not on the host.
 
+MUST Provision only after the step-3 reply accepts the tool set. A build runs networked package installs through the user's container runtime, and the interview answers did not show the user the toolset that build installs; the reply to the proposal is the approval. The blast-radius opt-ins (live-spawn, DAST) keep their own separate gates.
+MUST Run `run-preflight.py` before proposing the budget, and stop on a non-zero exit. A budget table built on a guessed concurrency dispatches nodes past the memory pool, and an OOM-killed node reports no findings rather than a failure.
 MUST Delegate the image build, dev-dep bake, and `--assert-tools` to a spawned provisioner that returns only the ext-image tags, the stack map, and the assert result. Building inline pours every `docker build` and `cargo fetch` line into the orchestrator's context, which is the fat-payload-in-orchestrator anti-pattern step 14 forbids; the orchestrator manages the run, it does not build it.
-MUST Have the provisioner VERIFY the image is complete before it returns success: run `scripts/install-tools.sh --probe` (which asserts every tool in the manifest answers inside its image) and, for the ext image, `run-contained.sh --assert-tools` over the full surface tool list. A missing tool is a build failure the provisioner FIXES in that same step (add the tool to the fragment, rebuild) before returning, not a gap it reports for a later retry. The provisioner returns success only when every expected tool answered; a "built" image that lacks `zizmor`, `osv-scanner`, or any manifest tool is an incomplete build, and a campaign that trusts it returns a meaningless clean for that dimension.
+MUST Have the provisioner VERIFY the image is complete before it returns success: run `scripts/install-tools.sh --probe --images <images>` (which asserts every tool in the manifest answers inside each named image) and, for the ext image, `run-contained.sh --assert-tools` over the full surface tool list. A missing tool is a build failure the provisioner FIXES in that same step (add the tool to the fragment, rebuild) before returning, not a gap it reports for a later retry. The provisioner returns success only when every expected tool answered; a "built" image that lacks `zizmor`, `osv-scanner`, or any manifest tool is an incomplete build, and a campaign that trusts it returns a meaningless clean for that dimension.
 NOT Never return a provisioned image on a partial tool set and let the campaign retry-install the rest. The image ships the complete toolset in one deterministic build; a scanner discovered missing at scan time has already produced a false clean for its threat dimension.
-MUST Build and extend the surface image autonomously here, without a separate confirmation gate. The interview already authorized the toolset; provisioning the image to hold it executes that approved plan rather than deciding anything new. The blast-radius opt-ins (live-spawn, DAST) stay gated; the image build does not.
-2. Build the proposal per `installer.md`: every viable tool for each detected
-   surface, default-on pre-selected ON, opt-in shown OFF with its reason.
-3. Build the budget table per `fuzzing.md`, stating the harness count and the
-   worst-case wall-clock so the user approves a duration.
-4. Stop and wait. "go" installs every missing default-on tool, accepts the
-   budget, and proceeds.
-5. Stamp the approved budget onto the run epic, so a resumed campaign reuses it.
 
 ## Step 4: repo-global pre-pass (scanners, baseline suite, self-read, and the project's own security config)
 
@@ -202,8 +215,15 @@ invariants. It files a wisp per artifact and runs nothing.
 
 ## Step 8: attack
 
-Spawn one `gremlin` per surface node, in parallel, Briefed from
-`gremlin-brief.md`. Each one:
+Spawn one `gremlin` per surface node, in parallel up to the admitted concurrency,
+Briefed from `gremlin-brief.md`. Before each node starts, the orchestrator runs
+
+    scripts/admit-node.py --preflight <dir>/.sabot/<id>/preflight.json --mem-cap <MB> \
+      --running-cap <MB> --running-cap <MB>
+
+with the candidate's `--mem` as `--mem-cap` and one `--running-cap` per node still
+running, and dispatches only on exit 0; exit 3 means wait for a node to finish. The
+same gate applies to the step-4 pre-pass container. Each gremlin:
 
 1. Runs its surface's scanners, the packs recon aimed, and the rules recon synthesized.
 2. Claims and executes the harness wisps for its surface, inside the budget.
@@ -214,6 +234,7 @@ Spawn one `gremlin` per surface node, in parallel, Briefed from
 MUST Treat a scanner crash as INVALID and fix the invocation, since "0 findings" from a tool that never ran is the most damaging possible report line.
 MUST Verify each harness reached its target using the runner's coverage output, because a harness wired to nothing looks exactly like a clean result.
 MUST Name the campaign-wide ceiling's observer, which is the main thread and no other role. A gremlin sees its own per-harness cap alone, so nothing measures the total unless the orchestrator records elapsed wall-clock against the approved `total_s` at each wave boundary and stops to re-approve before exceeding it. One run's approved `total_s` was 1800 and the run passed it roughly fiftyfold with no role positioned to notice.
+MUST Gate every node container on `admit-node.py` before it starts, passing the `jobs` it returns to the node. A node dispatched past the pool is OOM-killed and reads as a findings-free surface; three concurrent nodes once fit only because every one ran at 2048 MiB, and a 6144 MiB node could not join two of them.
 MUST Reserve the budget for the scanners recon aimed ON before allocating any of it to builds. `clippy` and the stock `opengrep` pack were dropped on three nodes of one run because a multi-target build consumed the clock, and recon had aimed both ON. A cheap mandated check that loses to an expensive optional build is a plan the budget table did not model.
 
 ### Lateral channel
@@ -310,8 +331,8 @@ NOT Never let a pattern replace its instances. The instances keep their rows and
 Requires a separate opt-in the user names; "run sabotage" is not it. LOAD
 `network-stage.md` and follow it. The stage runs once, in a container WITH egress,
 and it performs lookups rather than attacks: secret liveness, a fresh advisory DB
-against the baked one, action-tag drift, and the registry-only rule packs. A tool
-that only needs a one-time DOWNLOAD belongs in the image instead.
+against the baked one, Rust advisories, action-ref resolution, and the registry-only
+rule packs. A tool that only needs a one-time DOWNLOAD belongs in the image instead.
 
 MUST Record this stage as GRANTED, DECLINED, or NOT-OFFERED in the report, per `network-stage.md`. A declined stage is a known coverage boundary; an unmentioned one reads as full coverage.
 

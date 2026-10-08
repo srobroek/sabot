@@ -90,6 +90,30 @@ def test_multi_language_tauri_shape(tmp_path):
     assert len(out["bake_units"]) == 2       # src-tauri member collapsed into root
 
 
+def test_a_rust_unit_names_the_system_packages_its_lock_links(tmp_path):
+    # The Tauri GTK/webkit stack is installed by the ext image from this field, so it is
+    # read off the resolved graph rather than guessed from the manifest.
+    lock = "".join(f'[[package]]\nname = "{n}"\nversion = "0.1.0"\n\n'
+                   for n in ("app", "gtk-sys", "glib-sys", "serde"))
+    make_repo(tmp_path, {
+        "Cargo.toml": "[workspace]\nmembers=['src-tauri']\n",
+        "Cargo.lock": lock,
+        "src-tauri/Cargo.toml": "[package]\nname='app'\n",
+    })
+    out = json.loads(run(tmp_path).stdout)
+    (unit,) = out["bake_units"]
+    assert {(p["crate"], p["apt"], p["pkg_config"]) for p in unit["system_packages"]} == {
+        ("glib-sys", "libglib2.0-dev", "glib-2.0"),
+        ("gtk-sys", "libgtk-3-dev", "gtk+-3.0"),
+    }
+
+
+def test_an_unlocked_rust_unit_infers_no_system_packages(tmp_path):
+    make_repo(tmp_path, {"Cargo.toml": "[package]\nname='x'\n", "src/lib.rs": ""})
+    (unit,) = json.loads(run(tmp_path).stdout)["bake_units"]
+    assert unit["system_packages"] == []
+
+
 def test_gitignored_manifest_is_skipped(tmp_path):
     make_repo(tmp_path, {
         "Cargo.toml": "[package]\nname='x'\n",

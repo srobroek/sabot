@@ -139,7 +139,7 @@ duplicates a registry pack and rots silently (a mixed-language rule that passes
 | Shipped corpora | `corpora/prompt-injection.md`, `scripts/fuzz-cli.py` | payload classes and the decision-contract harness |
 
 MUST Point `--config` at the baked tree for the detected language (`/opt/sabot-db/semgrep-rules/<lang>`). A registry shorthand (`p/rust`, `p/python`, `--config auto`) resolves over the network, so under `--network none` it exits `OG_RC=2` having scanned nothing. Record that as NOT EXECUTED, "requires network", and never as zero findings or a retry.
-MUST Pass `--metrics off`. Four nodes measured `opengrep` exiting 2 on the metrics call alone, before any rule ran.
+NOT Never add a metrics flag to an `opengrep` invocation. opengrep has none (`tool-coverage-matrix.md`), and four nodes measured it exiting 2 on that flag alone, before any rule ran.
 MUST Confirm the rule tree resolved to a nonzero file count, since a `--config` path that names no loadable rule scans every file against nothing and reports clean.
 MUST Run a recon-synthesized rule against a known-positive from this repo before trusting a zero-match result, since a rule that matches nothing reads exactly like a clean repo.
 MUST Run every scanner under a UTF-8 locale, which `run-contained.sh` sets (`LANG=LC_ALL=C.UTF-8`, `PYTHONUTF8=1`). Measured: a synthesized rule file containing one curly quote made `opengrep` raise `'ascii' codec can't decode byte 0xe2` from `config_resolver.py:241` and exit 2 with 0 files scanned; the same invocation under a UTF-8 locale returned 41 findings across 14 files. A hand-rolled `docker run` that skips the wrapper reintroduces this.
@@ -152,7 +152,9 @@ alignment score answers a question nobody asked and costs inference to get.
 
 The agents surface stays covered statically: the reading pass against
 `corpora/prompt-injection.md`, the tool-grant analysis, `snyk-agent-scan` for MCP
-configs, and the shipped `prompt-build.yml` rules for prompts assembled in code.
+configs, and the rules `sabot-scout` synthesizes at recon for prompts assembled in code
+(the agentic-pattern list in `surfaces/agents.md`). No prompt-assembly rule file ships in
+the package.
 
 ## Where tools come from
 
@@ -174,7 +176,7 @@ the right way:
 | `npm i -g` / project `npm ci` | JS tools: ast-grep, jazzer.js, fast-check, eslint (project-local via the baked deps) |
 | `go install <path>@<version>` | Go tools: gosec |
 | `cargo install --locked <tool>` | cargo subcommands: cargo-fuzz, cargo-audit (clippy ships with the toolchain) |
-| the base language image | the compiler/toolchain itself: `FROM rust:1-slim`, `FROM python:3-slim`, `FROM node:20-slim` |
+| a `layers/<surface>.sh` fragment, or `COPY --from` an official image | the compiler/toolchain itself, on top of `sabot/base:1`: rustup in `layers/rust.sh`, Go in `layers/go.sh`, node copied out of `node:22-trixie-slim` |
 
 MUST Pin every tool the Dockerfile installs to an explicit version (`cargo install --locked <tool> --version x`, `go install ...@vX`, `pip install tool==x`), so the image is reproducible and a scan result does not shift when an upstream releases.
 MUST Make the pins of OUR security tooling bot-upgradable, so a scanner or fuzzer we bake does not silently rot. This is the tooling in the committed `Dockerfile.<surface>` (opengrep, cargo-fuzz, gosec, ...), not the target's own dev-deps, which are the target repo's concern. `FROM` tags are read by Dependabot and Renovate natively; a version pinned inside a `RUN` line is NOT (Dependabot ignores it, Renovate needs a `# renovate:` comment), so annotate each `RUN`-line pin with a `# renovate: datasource=... depName=...` line and ship `containers/renovate.json` with the custom manager. On-demand extend layers are transient and inherit their freshness from the committed base, so they pin inline without a bot.

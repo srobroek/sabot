@@ -28,7 +28,7 @@ rules forbid.
 | Tools + budget | 3 | decides coverage and wall-clock, and bounds the machine | "go" on an unseen tool set, or a budget the user never approved |
 | Remediation route | 4 | decides what step 15 does with a confirmed finding, and whether the run needs tracker access at all | asked only after the report, when the findings are already stale and the user has lost the context to choose |
 
-MUST Resolve all six core facts before spawning a sabot-scout. A campaign that starts under an unpinned scope produces findings for the wrong target and a coverage claim it cannot support.
+MUST Resolve all five core facts before spawning a sabot-scout. A campaign that starts under an unpinned scope produces findings for the wrong target and a coverage claim it cannot support.
 MUST Record every defaulted fact as a gap in the report. "Whole repo, because none was named" belongs there, since the user may have meant one module.
 
 ### Remediation route (core question 4)
@@ -77,14 +77,14 @@ as "N/A" or "unavailable", since a greyed-out option frames a non-choice as a di
 | Live-spawn agentic fuzzing | agent/skill/MCP definitions are in scope AND the user opts in | omitted from the question entirely; the definition-review pass still runs statically |
 | Dev-server DAST | a runnable web server is in scope AND the user opts in | omitted entirely; the static web pass still runs |
 | LLM access for grading | live-spawn or promptfoo grading was opted into | agentic-fuzz is skipped, and step 9 is recorded DECLINED or NOT-OFFERED |
-| Network stage (step 13) | always applicable, since the campaign is always offline | DECLINED, with all four egress-blocked gaps listed as open (`references/network-stage.md`) |
+| Network stage (step 13) | always applicable, since the campaign is always offline | DECLINED, with all five egress-blocked gaps listed as open (`references/network-stage.md`) |
 | Secret verification | the network stage was opted into AND a candidate secret was found | live secrets are reported UNVERIFIED by location and type; nothing is sent anywhere |
 
 MUST Ask each blast-radius opt-in as its own question after the core, and only when its triggering surface is in scope. An opt-in offered with no trigger is clutter; an opt-in folded into the core question buries the consent that matters.
 MUST Omit entirely any action the hard rules forbid (attacking a network host, a public endpoint, or a third-party service). It is never a menu option, an "N/A" row, or an "unavailable" line. A referenced-but-forbidden target (a CI file that probes a live host) is read statically and not mentioned in the interview at all.
 MUST Restate what a granted opt-in will run, against what, before the first spawn, and wait. An offhand "sure" is not the authorization a live-spawn or DAST run requires.
-MUST Ask for the network stage and for secret verification separately, and ask the second only after the first is granted and a candidate secret actually exists. Verifying a credential sends it to its provider, which the other five gaps never do, so one "yes" cannot cover both. Name the owner of the secret in the question, because a third party's key is never verified at all.
-MUST Ask, when the user opts into agentic grading (promptfoo or live-spawn), which LLM to use: an API key with its provider, a local or self-hosted endpoint, or none (which skips agentic-fuzz). Grading runs host-side, since the agents surface is container-free, so the credential stays in an environment variable on the host and is never baked into an image. Keep this question inside the opt-in block, out of the core.
+MUST Ask for the network stage and for secret verification separately, and ask the second only after the first is granted and a candidate secret actually exists. Verifying a credential sends it to its provider, which the other four gaps never do, so one "yes" cannot cover both. Name the owner of the secret in the question, because a third party's key is never verified at all.
+MUST Ask, when the user opts into agentic grading (promptfoo or live-spawn), which LLM to use: an API key with its provider, a local or self-hosted endpoint, or none (which skips agentic-fuzz). Grading runs in the step-9 container like every other target-touching run (`agentic-fuzz.md`, Containment), never on the host: only the static definition read of the agents surface is container-free, and a grader drives the target script that runs the agent. The key is the one live credential that container holds, passed in at run time as an environment variable and never baked into an image. Keep this question inside the opt-in block, out of the core.
 
 ## How to probe: adapt, do not recite
 

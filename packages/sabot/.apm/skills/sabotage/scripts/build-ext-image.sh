@@ -129,11 +129,40 @@ def cargo_member_manifests(unit):
         and m["manifest"].startswith(prefix)
     ]
 
+skip = set(os.environ.get("STACK_SKIP", "").split())
+
+# Distro -dev packages the -sys crates of the target link through pkg-config (the
+# GTK/webkit stack of a Tauri app), read off the `system_packages` field detect-stacks.py
+# emits. No apostrophe in this heredoc: bash 3.2 parses a heredoc inside $(...) as shell
+# and an unbalanced quote breaks the whole script. They live here, not
+# in the rust image, because only the target that names the crate needs them. The RUN
+# asserts pkg-config RESOLVES each module, since an installed pkg-config with no .pc file
+# is what left 199 Tauri handlers NOT EXECUTED while the binary answered.
+system = {}
+for u in result["bake_units"]:
+    if u["stack"] in skip or not u["fetch"]:
+        continue
+    for pkg in u.get("system_packages", []):
+        system.setdefault(pkg["apt"], pkg["pkg_config"])
+
 lines = [
     f"FROM {base}",
     # Persistent dep prefix, outside the run-time tmpfs at /scratch. Owned by the
     # non-root breaker uid so the fetch (and a run-time read) needs no root.
     "USER root",
+]
+if system:
+    print(f"build-ext-image: system packages: {' '.join(system)}", file=sys.stderr)
+    lines += [
+        "RUN apt-get update -q \\",
+        f" && apt-get install -y --no-install-recommends {' '.join(system)} \\",
+        " && rm -rf /var/lib/apt/lists/* \\",
+        f" && for pc in {' '.join(system.values())}; do \\",
+        '      pkg-config --exists "$pc" || \\',
+        '        { echo "build-ext-image: pkg-config cannot resolve $pc" >&2; exit 1; }; \\',
+        "    done",
+    ]
+lines += [
     "RUN mkdir -p /deps && chown 1000:1000 /deps",
     "USER 1000:1000",
     "ENV CARGO_HOME=/deps/cargo \\",
@@ -146,7 +175,6 @@ lines = [
 # One COPY + one RUN per bake unit, ordered so the dep layer caches on the
 # manifest+lock: only a lock change re-fetches. Copy ONLY manifest+lock, never the
 # source, so no audited code enters a layer.
-skip = set(os.environ.get("STACK_SKIP", "").split())
 for u in result["bake_units"]:
     if u["stack"] in skip:
         continue
